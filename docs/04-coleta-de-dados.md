@@ -12,11 +12,18 @@ supera qualquer rede grande com 40 minutos de dado ruim.
 robocar doctor          # dependências, disco, porta serial, câmera
 robocar link --watch    # ESP32 respondendo, telemetria chegando
 robocar camera          # taxa real da câmera
+robocar camera --focus  # a lente tem foco por rosca — confira a nitidez
 ```
 
-Os três precisam passar. Se `robocar doctor` reclamar de espaço em disco,
+Os quatro precisam passar. Se `robocar doctor` reclamar de espaço em disco,
 resolva **antes** — descobrir que o disco encheu depois de 40 minutos de
 gravação é perder 40 minutos.
+
+O `--focus` merece atenção especial: nossa lente tem **foco ajustável por
+rosca**, e um esbarrão no transporte desfoca a câmera. Uma sessão inteira
+gravada fora de foco é lixo, e ninguém percebe olhando o terminal. O comando
+compara a nitidez atual com a referência anotada em `config/camera.yaml` e
+avisa se caiu. Ver `docs/02-hardware.md`.
 
 ### Teste do failsafe (obrigatório, toda vez que mexer no firmware)
 

@@ -26,6 +26,11 @@ from . import __version__
 
 log = logging.getLogger("robocar")
 
+KB_PER_FRAME = 280
+"""Tamanho médio de um quadro JPEG q90 em 1640x1232, usado nas estimativas de
+disco. Se mudar a resolução ou a qualidade em ``config/camera.yaml``, meça de
+novo com ``du -sh`` numa sessão real e ajuste aqui."""
+
 
 def _setup_logging(verbose: bool) -> None:
     logging.basicConfig(
@@ -83,7 +88,7 @@ def cmd_doctor(args: argparse.Namespace) -> int:
     sessions_root = root / config.get_str("capture.root", "data/sessions")
     free_gb = disk_free_gb(sessions_root)
     rate = config.get_int("capture.rate_hz", 20)
-    minutes = free_gb * 1024**2 / (rate * 60 * 150) if rate else 0
+    minutes = free_gb * 1024**2 / (rate * 60 * KB_PER_FRAME) if rate else 0
     check(
         f"{free_gb:.1f} GB livres em {sessions_root}",
         free_gb >= 10,
@@ -184,7 +189,7 @@ def cmd_link(args: argparse.Namespace) -> int:
 
 
 def cmd_camera(args: argparse.Namespace) -> int:
-    """Abre a câmera, mede a taxa real e opcionalmente salva um quadro."""
+    """Abre a câmera, mede a taxa real e opcionalmente ajuda a focar."""
     from .config import find_repo_root, load_config
     from .sensors.camera import CameraError, open_camera
     from .util.rate import LoopMonitor
@@ -197,8 +202,13 @@ def cmd_camera(args: argparse.Namespace) -> int:
         print(f"erro de câmera: {exc}", file=sys.stderr)
         return 1
 
-    monitor = LoopMonitor()
     print(f"câmera aberta: {camera.width}x{camera.height} @ {camera.fps} fps alvo")
+    _warn_if_cropped_mode(camera, config)
+
+    if args.focus:
+        return _focus_assistant(camera, config)
+
+    monitor = LoopMonitor()
     print("medindo taxa real — Ctrl+C para sair\n")
 
     frames = 0
@@ -231,6 +241,91 @@ def cmd_camera(args: argparse.Namespace) -> int:
             f"({target} Hz). Causas comuns: resolução alta demais, CPU em modo "
             f"de economia (rode `sudo nvpmodel -m 0 && sudo jetson_clocks`) ou "
             f"outro processo usando a câmera."
+        )
+    return 0
+
+
+#: Modos do IMX219 que são RECORTE do sensor, não redução. Usá-los custa parte
+#: do campo de visão da lente de 120° — ver docs/02-hardware.md.
+_IMX219_CROPPED_MODES = {(1920, 1080), (1280, 720), (640, 480)}
+
+
+def _warn_if_cropped_mode(camera, config) -> None:
+    if config.get_str("camera.backend", "csi") != "csi":
+        return
+    if (camera.width, camera.height) in _IMX219_CROPPED_MODES:
+        print(
+            f"\nATENÇÃO: {camera.width}x{camera.height} é um modo RECORTADO do "
+            "IMX219 — você perde parte dos 120° da lente e ganha menos pixels "
+            "na placa.\nUse 1640x1232 (campo completo, 30 fps). Ver "
+            "docs/02-hardware.md.\n"
+        )
+
+
+def _focus_assistant(camera, config) -> int:
+    """Medidor de nitidez ao vivo, para ajustar a rosca de foco da lente."""
+    from .sensors.camera import CameraError, sharpness
+
+    reference = config.get_float("camera.focus.reference_sharpness", 0.0)
+    distance = config.get_float("camera.focus.target_distance_m", 2.0)
+    signs_roi = config.get("camera.roi_signs", None)
+
+    print(
+        f"\n=== assistente de foco ===\n"
+        f"Aponte a câmera para algo a ~{distance:.1f} m (distância de leitura\n"
+        f"das placas) e gire a rosca DEVAGAR. O número sobe conforme foca:\n"
+        f"pare quando ele parar de subir e recue até o pico.\n"
+    )
+    if reference > 0:
+        print(f"referência anotada em config/camera.yaml: {reference:.0f}\n")
+    print("Ctrl+C encerra e mostra o pico.\n")
+
+    peak = 0.0
+    peak_signs = 0.0
+    try:
+        with camera:
+            while True:
+                frame, _ = camera.read()
+                score = sharpness(frame)
+                score_signs = sharpness(frame, signs_roi) if signs_roi else 0.0
+                peak = max(peak, score)
+                peak_signs = max(peak_signs, score_signs)
+
+                # Barra proporcional ao pico da sessão: dá retorno visual
+                # mesmo sem saber de antemão a escala do valor absoluto.
+                filled = int(40 * score / peak) if peak > 0 else 0
+                bar = "#" * filled + "." * (40 - filled)
+                print(
+                    f"  nitidez={score:8.0f}  pico={peak:8.0f}  "
+                    f"placas={score_signs:8.0f}  [{bar}]",
+                    end="\r",
+                )
+    except KeyboardInterrupt:
+        pass
+    except CameraError as exc:
+        print(f"\nerro de câmera: {exc}", file=sys.stderr)
+        return 1
+
+    print(f"\n\npico global:            {peak:.0f}")
+    print(f"pico na região das placas: {peak_signs:.0f}")
+
+    if reference > 0:
+        ratio = peak / reference
+        minimum = config.get_float("camera.focus.min_sharpness_ratio", 0.6)
+        print(f"em relação à referência:   {ratio * 100:.0f}%")
+        if ratio < minimum:
+            print(
+                f"\nATENÇÃO: bem abaixo da referência ({reference:.0f}). "
+                "A câmera provavelmente desfocou — reajuste a rosca antes de "
+                "gravar qualquer sessão."
+            )
+            return 1
+    else:
+        print(
+            f"\nAnote em config/camera.yaml:\n"
+            f"  camera.focus.reference_sharpness: {peak:.0f}\n"
+            f"\nDepois TRAVE a rosca (esmalte ou Loctite 243) e marque a "
+            f"posição com caneta permanente atravessando lente e corpo."
         )
     return 0
 
@@ -478,7 +573,8 @@ def cmd_dataset_stats(args: argparse.Namespace) -> int:
     print("-" * 90)
     print(f"{'TOTAL':<42} {total_frames:>7} {total_seconds:>7.0f}")
     print(f"\n~{total_frames / 20 / 60:.1f} minutos de condução a 20 Hz")
-    print(f"~{total_frames * 150 / 1024**2:.1f} GB em disco (estimado)")
+    # ~280 kB por quadro JPEG q90 em 1640x1232 (ver docs/02-hardware.md).
+    print(f"~{total_frames * KB_PER_FRAME / 1024**2:.1f} GB em disco (estimado)")
 
     if args.histogram and total_frames:
         print("\n=== distribuição do esterço ===")
@@ -673,6 +769,11 @@ def build_parser() -> argparse.ArgumentParser:
     camera.add_argument("--backend", choices=["csi", "v4l2", "file"], default=None)
     camera.add_argument("--frames", type=int, default=0, help="0 = até Ctrl+C")
     camera.add_argument("--snapshot", default=None, help="salva o primeiro quadro")
+    camera.add_argument(
+        "--focus",
+        action="store_true",
+        help="medidor de nitidez ao vivo, para ajustar a rosca de foco da lente",
+    )
     camera.set_defaults(func=cmd_camera)
 
     # record

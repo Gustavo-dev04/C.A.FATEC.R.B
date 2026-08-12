@@ -277,6 +277,43 @@ def open_camera(config: Any, *, override_backend: str | None = None) -> Camera:
     raise CameraError(f"backend de câmera desconhecido: {backend!r}")
 
 
+def sharpness(frame: Any, roi: dict[str, float] | None = None) -> float:
+    """Mede a nitidez do quadro pela variância do laplaciano.
+
+    Quanto maior, mais nítido. É a métrica que permite ajustar a rosca de foco
+    da lente por número em vez de "achismo": gire devagar até o valor parar de
+    subir, depois recue até o pico.
+
+    O recorte é redimensionado para uma largura fixa antes da medição, de modo
+    que o número seja comparável entre resoluções de captura diferentes —
+    caso contrário, mudar de 1280×720 para 1640×1232 alteraria a escala e a
+    referência anotada em ``config/camera.yaml`` perderia sentido.
+    """
+    cv2 = _require_cv2()
+    import numpy as np
+
+    region = crop_roi(frame, roi) if roi else frame
+    if region.size == 0:
+        return 0.0
+
+    height, width = region.shape[:2]
+    if width != _SHARPNESS_WIDTH:
+        scale = _SHARPNESS_WIDTH / width
+        region = cv2.resize(
+            region,
+            (_SHARPNESS_WIDTH, max(1, int(height * scale))),
+            interpolation=cv2.INTER_AREA,
+        )
+
+    gray = cv2.cvtColor(region, cv2.COLOR_BGR2GRAY)
+    return float(np.var(cv2.Laplacian(gray, cv2.CV_64F)))
+
+
+_SHARPNESS_WIDTH = 640
+"""Largura de referência da medição de nitidez. Não mude sem refazer as
+referências anotadas em ``config/camera.yaml``."""
+
+
 def crop_roi(frame: Any, roi: dict[str, float]) -> Any:
     """Recorta uma região definida em frações da imagem (0.0–1.0).
 
@@ -300,4 +337,5 @@ __all__ = [
     "build_gstreamer_pipeline",
     "crop_roi",
     "open_camera",
+    "sharpness",
 ]

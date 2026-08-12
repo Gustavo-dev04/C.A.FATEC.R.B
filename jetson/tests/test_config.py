@@ -210,3 +210,56 @@ def test_perfil_race_do_repositorio_e_valido():
     assert config.get_bool("external.rc_receiver") is False
     assert config.get_bool("external.teleop") is False
     assert config.get_bool("external.wifi") is False
+
+
+def test_captura_usa_modo_de_campo_completo_do_imx219():
+    """A câmera é uma IMX219 com lente de 120°.
+
+    Os modos 1920x1080 e 1280x720 do sensor são RECORTE, não redução: usá-los
+    joga fora parte do campo de visão da lente e, junto, os pixels que a placa
+    de trânsito precisa ter para ser classificada. 1640x1232 é binning 2x2 do
+    array inteiro — campo completo a 30 fps. Ver docs/02-hardware.md.
+    """
+    config = cfg.load_config(cfg.find_repo_root())
+    largura = config.get_int("camera.capture.width")
+    altura = config.get_int("camera.capture.height")
+
+    modos_recortados = {(1920, 1080), (1280, 720), (640, 480)}
+    assert (largura, altura) not in modos_recortados, (
+        f"{largura}x{altura} é modo recortado do IMX219 — use 1640x1232"
+    )
+    # Modos de campo completo: o nativo e seus binnings inteiros.
+    assert (largura, altura) in {(3280, 2464), (1640, 1232)}
+
+
+def test_roi_das_placas_cobre_o_lado_direito():
+    """O regulamento garante a placa sempre à DIREITA da rota (item 3.5.2)."""
+    config = cfg.load_config(cfg.find_repo_root())
+    roi = config.get("camera.roi_signs")
+    assert roi["right"] == 1.0
+    assert 0.0 < roi["left"] < 1.0
+    assert roi["top"] < roi["bottom"]
+
+
+def test_placa_de_150mm_tem_pixels_suficientes_a_2m():
+    """Confere a viabilidade do MASTER com a lente e a resolução escolhidas.
+
+    Uma placa de 150 mm precisa de ~32 px para ser classificada com folga, na
+    janela de decisão de 1,5 a 2,5 m. Se alguém reduzir a resolução de captura
+    ou trocar por uma lente mais aberta, este teste falha antes de a coleta
+    inteira ser feita com um dado que não serve.
+    """
+    import math
+
+    config = cfg.load_config(cfg.find_repo_root())
+    largura_px = config.get_int("camera.capture.width")
+    hfov_deg = config.get_float("camera.hardware.fov_horizontal_deg")
+
+    distancia_mm = 2000.0
+    largura_cena_mm = 2 * distancia_mm * math.tan(math.radians(hfov_deg) / 2)
+    placa_px = 150.0 / largura_cena_mm * largura_px
+
+    assert placa_px >= 32, (
+        f"placa de 150 mm a 2 m ocuparia só {placa_px:.0f} px — insuficiente "
+        f"para o detector de placas do MASTER"
+    )

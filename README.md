@@ -12,6 +12,7 @@ categoria **MASTER** (minicidade com rota definida por placas de trânsito).
 | 🏁 Torneio | **05/12/2026**, a partir das 9h |
 | 📏 Limites do carro | 500 × 250 mm (estamos com 420 × 195 mm) |
 | 🏙️ Pista | Minicidade de 9,0 × 13,0 m, carpete escuro com faixas brancas |
+| 📷 Câmera | IMX219 8 MP, lente 120°, foco ajustável — captura em 1640 × 1232 |
 
 ---
 
@@ -109,6 +110,7 @@ tools/             🔧  Scripts de setup e regras udev
 | `robocar doctor` | Confere ambiente, disco, serial e câmera |
 | `robocar link --watch` | Telemetria do ESP32 em tempo real |
 | `robocar camera --snapshot foto.jpg` | Testa a câmera e mede a taxa real |
+| `robocar camera --focus` | Medidor de nitidez para ajustar a rosca de foco |
 | `robocar record --control rc` | **Grava uma sessão de dataset** |
 | `robocar dataset stats --histogram` | Resumo + distribuição do esterço |
 | `robocar dataset verify` | Confere integridade das sessões |

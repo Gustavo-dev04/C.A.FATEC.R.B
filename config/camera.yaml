@@ -1,39 +1,65 @@
 # =============================================================
 #  Configuração da câmera (Jetson Orin Nano)
 # =============================================================
-# Duas resoluções convivem no mesmo pipeline:
-#   - `capture`: o que é gravado em disco (alta o suficiente para
-#     detectar placas de 150 mm a ~2,5 m — ver docs/02-hardware.md).
-#   - `model_input`: o que entra na rede de direção (pequeno e rápido).
-# Grave SEMPRE na resolução de captura. Reduzir é fácil depois;
-# recuperar detalhe perdido é impossível.
+# Hardware definido: módulo IMX219 8 MP com lente 120° e foco ajustável.
+# Análise completa (contas de pixel, distorção, foco) em docs/02-hardware.md.
 
 camera:
-  # csi  -> IMX219/IMX477 no conector CSI (usa nvarguscamerasrc)
-  # v4l2 -> webcam USB
+  # --- identificação do hardware (não é lido pelo código; é registro) ------
+  hardware:
+    model: "IMX219 8MP 120° (lente de foco ajustável)"
+    sensor: "Sony IMX219"
+    sensor_resolution: "3280x2464"
+    sensor_size: "1/4\" (3.68 x 2.76 mm)"
+    fov_declared_deg: 120        # o fabricante costuma declarar na DIAGONAL
+    fov_horizontal_deg: 108      # estimado; confirmar com o teste da folha A4
+    fov_vertical_deg: 92         #   (procedimento em docs/02-hardware.md)
+    focus: "ajustável por rosca — TRAVAR após ajustar em ~2 m"
+    interface: "CSI-2, 15 pinos"
+    mount_height_mm: 180         # do chão ao centro da lente
+    mount_tilt_deg: 0            # positivo = apontando para cima
+
+  # csi  -> IMX219 no conector CSI (usa nvarguscamerasrc)
+  # v4l2 -> webcam USB (bancada, sem Jetson)
   # file -> replay de uma sessão gravada (testes sem hardware)
   backend: "csi"
   sensor_id: 0
   device: "/dev/video0"     # usado apenas quando backend = v4l2
 
+  # --- resolução de captura -----------------------------------------------
+  # ATENÇÃO: no IMX219, nem todo modo tem o mesmo campo de visão.
+  #   3280x2464 @21fps  campo COMPLETO, máximo detalhe
+  #   1920x1080 @30fps  RECORTADO — perde parte dos 120°
+  #   1640x1232 @30fps  campo COMPLETO (binning 2x2)   <-- é o que usamos
+  #   1280x720  @60fps  RECORTADO — perde bastante FOV
+  #
+  # 1640x1232 é metade exata de 3280x2464, ou seja, binning 2x2 de todo o
+  # array: mantém os 120° inteiros, dá 30 fps e o binning ainda melhora o
+  # desempenho sob a luz fraca do ginásio.
+  #
+  # Em 1280x720 uma placa de 150 mm a 2 m tem ~28 px — no limite. Em
+  # 1640x1232 tem 36 a 44 px, que é o que torna o MASTER viável.
   capture:
-    width: 1280
-    height: 720
+    width: 1640
+    height: 1232
     fps: 30
     flip_method: 0          # 0=nenhum, 2=180graus (câmera montada de cabeça p/ baixo)
 
   # Recorte aplicado ANTES de redimensionar para a rede de direção.
-  # Remove o céu/teto do ginásio e o capô do carro, que só atrapalham.
-  # Valores em fração da altura da imagem (0.0 = topo, 1.0 = base).
+  # Remove o teto do ginásio e o capô do carro, que só atrapalham.
+  # Frações da altura da imagem (0.0 = topo, 1.0 = base).
   roi_driving:
     top: 0.45
     bottom: 0.95
 
-  # Região onde as placas aparecem: sempre à DIREITA da rota, com a
-  # borda inferior a 400 mm do chão (regulamento 3.5.2). Com a câmera
-  # a ~180 mm de altura, isso cai na metade superior do quadro.
+  # Região onde as placas aparecem: sempre à DIREITA da rota, com a borda
+  # inferior a 400 mm do chão (regulamento 3.5.2).
+  #
+  # A lente de 120° comprime os ângulos: a placa fica apenas um pouco acima do
+  # centro (altura 0.22 a 0.45 do quadro, de 0,5 m a 3 m), e não no alto como
+  # aconteceria com uma lente estreita. Daí o topo em 0.10 e não em 0.05.
   roi_signs:
-    top: 0.05
+    top: 0.10
     bottom: 0.60
     left: 0.35
     right: 1.0
@@ -43,16 +69,28 @@ camera:
     height: 66
     color_space: "yuv"      # yuv | rgb  (PilotNet original usa YUV)
 
-  # Parâmetros do ISP (nvarguscamerasrc). Fixar exposição e ganho evita
-  # que o auto-exposure "pisque" ao passar do carpete escuro para a
-  # faixa branca — variação que a rede aprende como se fosse curva.
+  # Parâmetros do ISP (nvarguscamerasrc). Fixar exposição e ganho evita que o
+  # auto-exposure "pisque" ao passar do carpete escuro para a faixa branca —
+  # variação que a rede aprende como se fosse informação sobre a trajetória.
   isp:
     auto_exposure: false
-    exposure_time_ns: 8000000     # 8 ms
+    exposure_time_ns: 8000000     # 8 ms; subir se o ginásio for escuro
     gain_range: "1 4"
     awb_mode: 1                   # 1 = manual/off, 2 = auto
     wb_gains: "1.4 1.0 1.0 1.6"
     saturation: 1.0
 
-  # Calibração intrínseca (preenchida por `robocar calib camera`).
+  # --- foco ----------------------------------------------------------------
+  # Esta lente tem foco por rosca. Ajuste mirando algo a ~2 m (distância de
+  # leitura das placas) com `robocar camera --focus`, TRAVE a rosca e anote
+  # abaixo o valor de nitidez obtido. `robocar camera --focus` compara com
+  # este número e avisa se a câmera desfocou.
+  focus:
+    target_distance_m: 2.0
+    reference_sharpness: 0.0      # preencher após o ajuste inicial
+    min_sharpness_ratio: 0.6      # abaixo de 60% da referência = alerta
+
+  # Calibração intrínseca. Necessária para retificar a distorção de barril da
+  # lente de 120° ao estimar geometria (distância até a placa). NÃO usar na
+  # rede de direção: ela aprende com a distorção incluída.
   intrinsics_file: "config/calib/camera_intrinsics.yaml"

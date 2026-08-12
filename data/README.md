@@ -4,11 +4,14 @@
 
 ## Por quê
 
+Gravamos em **1640 × 1232** (campo completo da lente de 120°, ~280 kB por
+quadro JPEG q90). A 20 Hz:
+
 | Duração de gravação | Frames (20 Hz) | Disco |
 |---|---|---|
-| 10 min | 12 000 | ~1,8 GB |
-| 1 h | 72 000 | ~10,8 GB |
-| 8 h (dia de treino) | 576 000 | ~86 GB |
+| 10 min | 12 000 | ~3,4 GB |
+| 1 h | 72 000 | ~20 GB |
+| 8 h (dia de treino) | 576 000 | ~160 GB |
 
 O Git não lida bem com isso: cada `clone` traria dezenas de GB, e como imagens
 JPEG não comprimem nem fazem *diff*, o histórico só cresceria. Git LFS

@@ -74,6 +74,12 @@ se lembrou de desligar o Wi-Fi.
 - [ ] **Teste de failsafe** com o carro no cavalete
 - [ ] `robocar calib steering` na pista real
 - [ ] `robocar camera --snapshot` — ajustar exposição para a luz do ginásio
+- [ ] **`robocar camera --focus`** — conferir a nitidez contra a referência
+      anotada em `config/camera.yaml`. A lente tem foco por rosca: se levou
+      esbarrão na viagem, desfocou
+- [ ] Rosca de foco **travada** e traço de caneta alinhado
+- [ ] Confirmar que a captura está em **1640×1232** (campo completo), não em
+      1280×720 (recortado)
 - [ ] **Marcar a posição da câmera com fita** e não mexer mais
 
 ### Coleta (16h–19h) — a parte mais valiosa do dia
