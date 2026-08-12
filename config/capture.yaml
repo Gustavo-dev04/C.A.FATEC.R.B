@@ -1,0 +1,52 @@
+# =============================================================
+#  Configuração da coleta de dados (gravação de sessões)
+# =============================================================
+
+capture:
+  root: "data/sessions"
+  # Taxa de gravação. Menor que o FPS da câmera de propósito: 20 Hz já
+  # sobra para aprender direção e reduz ~33% o volume de disco.
+  rate_hz: 20
+
+  image:
+    format: "jpg"
+    quality: 90             # 90 preserva a faixa branca sem estourar o disco
+    subdir: "images"
+    filename_pattern: "{index:06d}.jpg"
+
+  # Rótulo (label) de direção/aceleração vem SEMPRE da telemetria do
+  # ESP32, ou seja, do que os atuadores realmente executaram — nunca do
+  # comando enviado. Comando != executado quando há rampa, failsafe,
+  # limite de velocidade ou o piloto está no rádio RC.
+  labels:
+    source: "telemetry"
+    # Descarta o frame se a telemetria mais recente for mais velha que isso.
+    max_telemetry_age_ms: 60
+
+  # Filtros aplicados durante a gravação (economizam limpeza depois).
+  filters:
+    # Não grava com o carro parado: encheria o dataset de frames
+    # idênticos com throttle=0 e ensinaria a rede a ficar parada.
+    skip_when_stopped: true
+    min_throttle: 0.03
+    # Segundos de "aquecimento" descartados no início da sessão.
+    warmup_s: 1.5
+
+  # Buffer entre a thread de captura e a de escrita em disco.
+  writer:
+    queue_size: 256
+    workers: 2
+    fsync_every: 200        # força flush do JSONL a cada N registros
+
+  # Metadados obrigatórios pedidos ao operador no início da sessão.
+  # Sem isso, daqui a dois meses ninguém sabe o que é cada pasta.
+  prompt_metadata:
+    - track          # ex.: minicidade_fatec, garagem, pista_teste
+    - driver         # quem estava pilotando
+    - lighting       # ex.: luz_natural, fluorescente, noturno
+    - direction      # horario | antihorario
+    - notes
+
+# Sessões inválidas (batida, saída de pista, alguém entrou na frente)
+# devem ser marcadas com `robocar dataset tag <sessao> --discard "motivo"`
+# em vez de apagadas: saber o que deu errado tem valor.

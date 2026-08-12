@@ -1,0 +1,55 @@
+# =============================================================
+#  PERFIL DE PROVA OFICIAL - RoboCar Race 2026
+# =============================================================
+# Aplicar com:  robocar drive --profile race
+#
+# Regulamento, item 3.4/3.5:
+#   "O sensoriamento deve ser 100% embarcado - não é permitida
+#    comunicação com computação ou sensoriamento externo."
+#   "Ação humana somente durante as fases de treino e testes."
+#
+# Este perfil desliga, por configuração, TUDO que possa ser
+# interpretado como controle ou sensoriamento externo. Rodar a prova
+# oficial com qualquer outro perfil é risco de desclassificação.
+
+profile: race
+
+# --- Bloqueios obrigatórios pelo regulamento ------------------
+external:
+  wifi: false               # `robocar drive --profile race` chama `nmcli radio all off`
+  bluetooth: false
+  rc_receiver: false        # rádio RC desabilitado no ESP32 via $CFG
+  teleop: false             # nenhum gamepad/teclado aceito
+  ssh_required: false       # o carro deve funcionar sem nenhum host conectado
+
+# --- Comportamento em prova -----------------------------------
+run:
+  autostart: true           # inicia sozinho quando o semáforo abrir
+  wait_for_green_light: true
+  # O semáforo fica a 100 cm da largada e passa vermelho -> amarelo -> verde.
+  # Largar antes do verde: +20 s no tempo total, ou -2 m na distância.
+  traffic_light:
+    detector: "hsv+cnn"
+    min_green_frames: 3     # confirma o verde em 3 quadros seguidos (anti-ruído)
+    timeout_s: 120          # se nada for detectado, aborta e avisa por LED
+
+  record_run: true          # grava a volta oficial para análise posterior
+  telemetry_log: true
+
+# --- Limites ---------------------------------------------------
+throttle_limit: 0.60        # sobe só depois de validado no treino de 04/12
+watchdog:
+  # Sem frame novo da câmera nesse intervalo, para o carro. Perder a
+  # volta é melhor que sair da pista (-10 s por invasão/saída).
+  camera_timeout_ms: 300
+  # Em prova, se a rede perder a pista, parar > insistir e invadir.
+  lost_track_action: "stop"
+  lost_track_timeout_ms: 800
+
+# --- Regras de pontuação que o software precisa respeitar ------
+# (resumo; ver docs/00-regulamento-resumo.md)
+scoring_notes:
+  wrong_way_or_off_track_penalty_s: 10
+  jump_start_penalty_s: 20
+  jump_start_distance_penalty_m: 2
+  keep_right: true          # manter-se na mão direita da rua

@@ -1,0 +1,17 @@
+# Dependências do Jetson (runtime do carro).
+#
+# ATENÇÃO no Jetson: NÃO instale opencv-python pelo pip. O JetPack já traz o
+# OpenCV compilado com CUDA e com o backend GStreamer, que é o que faz a câmera
+# CSI funcionar. A versão do pip vem sem GStreamer e a câmera simplesmente não
+# abre. Confira com:
+#     python3 -c "import cv2; print(cv2.getBuildInformation())" | grep -i gstreamer
+#
+# Instalação:
+#     pip install -r jetson/requirements.txt
+
+PyYAML>=5.4
+pyserial>=3.5
+numpy>=1.21
+
+# Opcional: coleta de dados com gamepad (não é preciso se pilotar por rádio RC).
+# evdev>=1.6

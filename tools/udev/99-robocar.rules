@@ -1,0 +1,31 @@
+# Nome fixo para o ESP32 do carro.
+#
+# Sem isso, o ESP32 aparece como /dev/ttyUSB0 hoje e /dev/ttyUSB1 amanhã,
+# dependendo da ordem em que os dispositivos USB foram conectados. Com a regra,
+# ele é sempre /dev/robocar-esp32 — e `robocar` procura esse nome primeiro.
+#
+# Instalação:
+#   sudo cp tools/udev/99-robocar.rules /etc/udev/rules.d/
+#   sudo udevadm control --reload-rules && sudo udevadm trigger
+#
+# Descubra o idVendor/idProduct da SUA placa com:
+#   udevadm info -a -n /dev/ttyUSB0 | grep -E 'idVendor|idProduct|serial'
+#
+# Se houver mais de um ESP32 na bancada, acrescente ATTRS{serial}=="..." para
+# diferenciá-los.
+
+# CP2102 (ESP32 DevKitC e a maioria das placas)
+SUBSYSTEM=="tty", ATTRS{idVendor}=="10c4", ATTRS{idProduct}=="ea60", \
+    SYMLINK+="robocar-esp32", MODE="0666", GROUP="dialout"
+
+# CH340/CH341 (placas mais baratas)
+SUBSYSTEM=="tty", ATTRS{idVendor}=="1a86", ATTRS{idProduct}=="7523", \
+    SYMLINK+="robocar-esp32", MODE="0666", GROUP="dialout"
+
+# FTDI FT232
+SUBSYSTEM=="tty", ATTRS{idVendor}=="0403", ATTRS{idProduct}=="6001", \
+    SYMLINK+="robocar-esp32", MODE="0666", GROUP="dialout"
+
+# USB CDC nativo (ESP32-S2/S3/C3)
+SUBSYSTEM=="tty", ATTRS{idVendor}=="303a", \
+    SYMLINK+="robocar-esp32", MODE="0666", GROUP="dialout"

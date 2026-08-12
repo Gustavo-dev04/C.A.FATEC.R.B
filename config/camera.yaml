@@ -1,0 +1,58 @@
+# =============================================================
+#  Configuração da câmera (Jetson Orin Nano)
+# =============================================================
+# Duas resoluções convivem no mesmo pipeline:
+#   - `capture`: o que é gravado em disco (alta o suficiente para
+#     detectar placas de 150 mm a ~2,5 m — ver docs/02-hardware.md).
+#   - `model_input`: o que entra na rede de direção (pequeno e rápido).
+# Grave SEMPRE na resolução de captura. Reduzir é fácil depois;
+# recuperar detalhe perdido é impossível.
+
+camera:
+  # csi  -> IMX219/IMX477 no conector CSI (usa nvarguscamerasrc)
+  # v4l2 -> webcam USB
+  # file -> replay de uma sessão gravada (testes sem hardware)
+  backend: "csi"
+  sensor_id: 0
+  device: "/dev/video0"     # usado apenas quando backend = v4l2
+
+  capture:
+    width: 1280
+    height: 720
+    fps: 30
+    flip_method: 0          # 0=nenhum, 2=180graus (câmera montada de cabeça p/ baixo)
+
+  # Recorte aplicado ANTES de redimensionar para a rede de direção.
+  # Remove o céu/teto do ginásio e o capô do carro, que só atrapalham.
+  # Valores em fração da altura da imagem (0.0 = topo, 1.0 = base).
+  roi_driving:
+    top: 0.45
+    bottom: 0.95
+
+  # Região onde as placas aparecem: sempre à DIREITA da rota, com a
+  # borda inferior a 400 mm do chão (regulamento 3.5.2). Com a câmera
+  # a ~180 mm de altura, isso cai na metade superior do quadro.
+  roi_signs:
+    top: 0.05
+    bottom: 0.60
+    left: 0.35
+    right: 1.0
+
+  model_input:
+    width: 200
+    height: 66
+    color_space: "yuv"      # yuv | rgb  (PilotNet original usa YUV)
+
+  # Parâmetros do ISP (nvarguscamerasrc). Fixar exposição e ganho evita
+  # que o auto-exposure "pisque" ao passar do carpete escuro para a
+  # faixa branca — variação que a rede aprende como se fosse curva.
+  isp:
+    auto_exposure: false
+    exposure_time_ns: 8000000     # 8 ms
+    gain_range: "1 4"
+    awb_mode: 1                   # 1 = manual/off, 2 = auto
+    wb_gains: "1.4 1.0 1.0 1.6"
+    saturation: 1.0
+
+  # Calibração intrínseca (preenchida por `robocar calib camera`).
+  intrinsics_file: "config/calib/camera_intrinsics.yaml"

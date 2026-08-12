@@ -1,0 +1,20 @@
+# Dependências de treinamento (PC com GPU; NÃO precisam ir para o Jetson).
+#
+# No Jetson, torch precisa ser a build da NVIDIA para JetPack — a do PyPI não
+# tem CUDA para ARM. Veja:
+# https://docs.nvidia.com/deeplearning/frameworks/install-pytorch-jetson-platform/
+#
+# Mas o normal é: treinar no PC, exportar ONNX, converter para TensorRT no
+# Jetson. Assim o Jetson nunca precisa de torch.
+
+torch>=2.0
+torchvision>=0.15
+numpy>=1.21
+opencv-python>=4.5
+PyYAML>=5.4
+
+# Opcional: verificação do ONNX exportado
+# onnxruntime>=1.15
+
+# Opcional: acompanhamento de experimentos
+# tensorboard>=2.12

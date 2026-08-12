@@ -1,0 +1,70 @@
+# =============================================================
+#  Parâmetros físicos, limites de atuação e segurança do veículo
+# =============================================================
+# Este arquivo é a FONTE ÚNICA DE VERDADE para calibração.
+# O Jetson lê estes valores e os envia ao ESP32 no handshake ($CFG),
+# de modo que o firmware não precisa ser recompilado a cada ajuste.
+#
+# ATENÇÃO: os limites de `throttle` e `safety` também existem como
+# constantes de compilação no firmware (firmware/esp32/include/config.h).
+# O ESP32 sempre aplica o MENOR entre os dois — o Jetson nunca consegue
+# afrouxar um limite de segurança do firmware, apenas apertá-lo.
+
+vehicle:
+  name: "cafatecrb-01"
+  category: "master"        # junior | master
+  scale: "1:10"
+  # Limites do regulamento (Júnior/Master): 500,0 mm x 250,0 mm
+  length_mm: 420
+  width_mm: 195
+  wheelbase_mm: 255         # entre-eixos, usado no modelo de Ackermann
+  track_width_mm: 170
+  mass_g: 1800
+
+# --- Direção (servo nas rodas dianteiras) ---------------------
+# steer normalizado: -1.0 = esquerda máxima, 0.0 = centro, +1.0 = direita máxima
+steering:
+  center_us: 1500           # calibrar com `robocar calib steering`
+  min_us: 1150              # pulso correspondente a steer = -1.0
+  max_us: 1850              # pulso correspondente a steer = +1.0
+  max_angle_deg: 28.0       # esterço mecânico real no batente
+  invert: false
+  slew_rate_per_s: 6.0      # variação máx. de steer por segundo (anti-solavanco)
+
+# --- Tração (ESC + motor traseiro) ----------------------------
+# throttle normalizado: -1.0 = ré máxima, 0.0 = neutro, +1.0 = frente máxima
+throttle:
+  neutral_us: 1500
+  min_us: 1000
+  max_us: 2000
+  invert: false
+  deadband: 0.05            # abaixo disso = neutro (evita "arrastar" o motor)
+  slew_rate_per_s: 2.0      # rampa de aceleração
+  # Tetos de velocidade por modo de operação.
+  limit_collect: 0.30       # coleta de dados: devagar e constante
+  limit_auto: 0.45          # condução autônoma em treino
+  limit_race: 0.60          # prova oficial (subir só depois de validado)
+  limit_reverse: 0.20
+
+# --- Segurança ------------------------------------------------
+safety:
+  command_timeout_ms: 250   # sem $CMD nesse intervalo -> failsafe (neutro)
+  telemetry_hz: 50
+  command_hz: 50
+  obstacle_stop_mm: 250     # distância frontal que zera a tração
+  obstacle_slow_mm: 600     # distância frontal que limita a tração pela metade
+  battery_cells: 2          # LiPo 2S
+  battery_min_v: 6.8        # abaixo disso: alerta de bateria fraca
+  battery_critical_v: 6.4   # abaixo disso: corta tração
+
+# --- Sensores de distância ------------------------------------
+# Índices seguem a ordem do array de telemetria (d0, d1, d2).
+distance_sensors:
+  type: "ultrasonic"        # ultrasonic | tof | capacitive
+  count: 3
+  max_range_mm: 4000
+  invalid_value: 0          # 0 = sem eco / fora de alcance
+  layout:
+    - {index: 0, name: "front_left",  yaw_deg: -35, x_mm: 90, y_mm:  60}
+    - {index: 1, name: "front",       yaw_deg:   0, x_mm: 110, y_mm:  0}
+    - {index: 2, name: "front_right", yaw_deg: +35, x_mm: 90, y_mm: -60}

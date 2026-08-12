@@ -1,0 +1,5 @@
+# Ferramentas de desenvolvimento (não precisam ir para o Jetson).
+-r requirements.txt
+
+pytest>=7.0
+ruff>=0.5

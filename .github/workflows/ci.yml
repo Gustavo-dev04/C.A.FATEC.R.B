@@ -1,0 +1,62 @@
+name: CI
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+
+jobs:
+  python:
+    name: Python — lint e testes
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      # O núcleo (protocolo, esquema do dataset, configuração) roda só com
+      # PyYAML de propósito: a CI não precisa de OpenCV, torch nem hardware.
+      - name: Instalar dependências
+        run: |
+          python -m pip install --upgrade pip
+          pip install pytest ruff PyYAML
+
+      - name: Lint
+        run: ruff check .
+        working-directory: jetson
+
+      - name: Testes
+        run: python -m pytest -q
+        working-directory: jetson
+
+  firmware:
+    name: Firmware — testes de host do protocolo
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # Compila protocol.cpp no host contra um stub de Arduino.h e confere que
+      # os bytes gerados batem com os do Python. É a proteção contra as duas
+      # implementações do protocolo saírem de sincronia.
+      - name: Compilar e rodar
+        run: make test
+        working-directory: firmware/esp32/test/host
+
+  firmware-build:
+    name: Firmware — compilação para ESP32
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Instalar PlatformIO
+        run: pip install platformio
+
+      - name: Compilar
+        run: pio run
+        working-directory: firmware/esp32

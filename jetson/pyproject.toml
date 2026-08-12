@@ -1,0 +1,48 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "robocar"
+version = "0.1.0"
+description = "Software embarcado do carro autônomo C.A.FATEC.R.B — RoboCar Race 2026"
+readme = "../README.md"
+requires-python = ">=3.8"
+license = { text = "MIT" }
+
+# Dependências mínimas de propósito. O núcleo (protocolo, esquema do dataset,
+# configuração) roda só com PyYAML, o que mantém a CI leve e permite inspecionar
+# datasets em qualquer máquina. OpenCV e pyserial só fazem falta quando há
+# hardware de verdade — ver os extras abaixo.
+dependencies = ["PyYAML>=5.4"]
+
+[project.optional-dependencies]
+car = ["pyserial>=3.5", "numpy>=1.21"]
+gamepad = ["evdev>=1.6"]
+dev = ["pytest>=7.0", "ruff>=0.5"]
+
+[project.scripts]
+robocar = "robocar.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["robocar*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+filterwarnings = ["error::DeprecationWarning"]
+
+[tool.ruff]
+line-length = 95
+target-version = "py38"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B", "C4", "SIM"]
+ignore = [
+    "E501",   # o formatador já cuida do comprimento
+    "B008",   # chamada em default: usado de propósito nos parsers
+    "SIM108", # ternário nem sempre é mais legível
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["SIM117"]
