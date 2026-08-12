@@ -111,6 +111,8 @@ tools/             🔧  Scripts de setup e regras udev
 | `robocar link --watch` | Telemetria do ESP32 em tempo real |
 | `robocar camera --snapshot foto.jpg` | Testa a câmera e mede a taxa real |
 | `robocar camera --focus` | Medidor de nitidez para ajustar a rosca de foco |
+| `robocar camera --virtual` | Vista retificada das placas (câmera virtual) |
+| `robocar calib camera` | Calibra intrínsecos e distorção da lente |
 | `robocar record --control rc` | **Grava uma sessão de dataset** |
 | `robocar dataset stats --histogram` | Resumo + distribuição do esterço |
 | `robocar dataset verify` | Confere integridade das sessões |

@@ -71,6 +71,58 @@ Consequências diretas, já refletidas em `config/profiles/race.yaml`:
 
 > "Ação humana somente durante as fases de treino e de testes."
 
+## 4.1 Há alguma restrição de câmera, lente ou campo de visão?
+
+**Não. Nenhuma.** Varredura completa do texto do regulamento (busca
+normalizada, ignorando acentos e a formatação do PDF):
+
+| Termo buscado | Ocorrências |
+|---|---|
+| "lente" | **0** |
+| "ângulo" / "campo de visão" | **0** |
+| "resolução" / "pixel" / "megapixel" | **0** |
+| "foco" | **0** |
+| "proibido" | **0** |
+
+O que o regulamento diz sobre sensoriamento nas nossas categorias
+(itens 3.4 e 3.5) é **explicitamente permissivo**:
+
+> "**Permitido o uso de câmeras, GPS, Lidar e qualquer outro tipo de
+> sensoriamento, desde que esteja embarcado no veículo.**"
+
+> "Computação livre, juntamente com toda a eletrônica para mover o veículo."
+
+Repare no plural — "câmer**as**". **Mais de uma câmera é explicitamente
+permitido**, assim como qualquer lente, resolução ou taxa de quadros.
+
+### A única lista fechada de componentes é da categoria NANO
+
+O item 3.1.2 restringe componentes:
+
+> "Sensores: modelo barreira de infravermelho — 2 a 8 canais.
+> Eletrônica embarcada: Arduino, ESP32 ou Raspberry Pico."
+
+Isso vale **só para a NANO** (ensino médio/técnico). Júnior e Master não têm
+lista equivalente — a única exigência é ser embarcado.
+
+### Então o que de fato nos limita
+
+Só três coisas, nenhuma delas sobre óptica:
+
+1. **Tudo embarcado.** "Não é permitida comunicação com computação ou
+   sensoriamento externo."
+2. **Dimensão do carro: 500 × 250 mm**, com a câmera e os suportes montados.
+   É aqui que uma segunda câmera poderia esbarrar — no espaço, não na regra.
+3. **Item 4.9:** durante o torneio, "estão vetadas trocas por um outro robô ou
+   **troca substancial dos componentes embarcados**". Ou seja, a câmera tem
+   que estar decidida e montada **antes da inspeção** do dia 04/12. Trocar de
+   câmera no dia é risco de desclassificação.
+
+**Conclusão:** a lente de 120° é perfeitamente legal, e a limitação dela é
+puramente técnica (pixels na placa) — resolvida por software, ver
+`docs/02-hardware.md`. Se um dia quisermos uma segunda câmera estreita só para
+placas, o regulamento também permite; o limite seria o espaço no chassi.
+
 ## 5. Pista
 
 - Minicidade de **9,0 m × 13,0 m**, quarteirões de **2,0 m × 4,0 m**.

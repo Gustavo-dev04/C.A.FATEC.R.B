@@ -90,7 +90,29 @@ camera:
     reference_sharpness: 0.0      # preencher após o ajuste inicial
     min_sharpness_ratio: 0.6      # abaixo de 60% da referência = alerta
 
-  # Calibração intrínseca. Necessária para retificar a distorção de barril da
-  # lente de 120° ao estimar geometria (distância até a placa). NÃO usar na
-  # rede de direção: ela aprende com a distorção incluída.
+  # Calibração intrínseca, gerada por `robocar calib camera`.
+  # NÃO usar na rede de direção: ela aprende com a distorção incluída, e
+  # retificar só adicionaria custo de CPU e uma fonte de erro.
   intrinsics_file: "config/calib/camera_intrinsics.yaml"
+
+  # --- câmera virtual das placas ------------------------------------------
+  # Otimização por software da lente de 120°: a partir do quadro grande
+  # angular, sintetiza uma vista RETIFICADA e apontada para a direita — "como
+  # se" houvesse uma segunda câmera estreita mirando onde as placas ficam.
+  #
+  # O que isso resolve: na borda direita do quadro a distorção de barril
+  # deforma a placa (círculo vira elipse, seta entorta). O classificador
+  # teria que aprender todas as deformações possíveis. Com a câmera virtual,
+  # ele sempre vê a placa no mesmo enquadramento e com geometria correta.
+  #
+  # O que isso NÃO resolve: retificar não cria pixels. A placa não fica mais
+  # nítida — fica geometricamente correta.
+  #
+  # Requer calibração. Ver docs/02-hardware.md.
+  virtual_sign_camera:
+    enabled: true
+    yaw_deg: 30.0       # positivo = direita (as placas ficam sempre à direita)
+    pitch_deg: 8.0      # positivo = cima (placa a 475 mm, câmera a 180 mm)
+    hfov_deg: 50.0      # campo da câmera virtual
+    width: 0            # 0 = calcular para não perder resolução
+    height: 0

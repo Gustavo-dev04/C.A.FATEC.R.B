@@ -185,6 +185,83 @@ lente estreita a perde justo quando ela mais importa. É por isso que 120° é u
 meio-termo razoável, muito melhor que os 160° dos kits genéricos (que dariam
 8 px na placa a 2 m e inviabilizariam o MASTER).
 
+### A câmera virtual — otimizando os 120° por software
+
+> Antes de tudo: **o regulamento não impõe nenhuma restrição de lente, campo de
+> visão, resolução ou número de câmeras** nas categorias Júnior e Master. A
+> verificação completa está em [docs/00 §4.1](00-regulamento-resumo.md#41-há-alguma-restrição-de-câmera-lente-ou-campo-de-visão).
+> Tudo aqui é otimização técnica, não contorno de regra.
+
+O problema da lente grande angular não é só "poucos pixels": é que a placa
+vive na **borda direita** do quadro, exatamente onde a distorção de barril é
+mais forte. O círculo da placa vira elipse e a seta entorta — e a deformação
+muda conforme o carro se aproxima.
+
+A solução por código é sintetizar uma **câmera virtual**: a partir do quadro
+grande angular, produzir uma vista retificada e apontada para a direita, como
+se houvesse uma segunda câmera estreita mirando onde as placas ficam.
+
+```
+ quadro bruto 1640×1232, 120°
+ ┌──────────────────────────────────────┐
+ │                          ╭───────╮   │   placa deformada pelo barril,
+ │        rua               │ placa │   │   posição varia no quadro
+ │                          ╰───────╯   │
+ └──────────────────────────────────────┘
+                │  VirtualCamera(yaw=+30°, pitch=+8°, fov=50°)
+                ▼
+         ┌─────────────┐
+         │   ╭─────╮   │   556×417, retificada: círculo é círculo,
+         │   │placa│   │   seta é reta, enquadramento sempre igual
+         │   ╰─────╯   │
+         └─────────────┘
+```
+
+Como funciona: `cv2.initUndistortRectifyMap` recebe os intrínsecos reais, os
+coeficientes de distorção, uma **rotação** (o apontamento da câmera virtual) e
+os intrínsecos do destino. Os mapas são calculados **uma vez**; depois é só
+`cv2.remap` por quadro — poucos milissegundos de CPU, sem tocar na GPU, que
+está ocupada com a inferência.
+
+**O que isso ganha:** o classificador vê a placa sempre no mesmo
+enquadramento e com geometria correta. Ele deixa de precisar aprender todas as
+deformações possíveis, o que significa rede menor, treino mais rápido e menos
+dado necessário.
+
+**O que isso NÃO ganha — e é importante ser honesto:** retificar **não cria
+pixels**. Uma placa que tem 45 px no quadro bruto continua com ~45 px na vista
+virtual (há um teste garantindo exatamente isso:
+`test_camera_virtual_nao_inventa_resolucao`). O ganho é de *precisão*, não de
+*resolução*. Quem quiser mais pixels precisa subir a resolução de captura.
+
+Uso:
+
+```bash
+robocar calib camera --chessboard 9x6 --square-mm 25   # uma vez
+robocar camera --virtual --snapshot placa.jpg          # confere o enquadramento
+```
+
+Parâmetros em `config/camera.yaml`, seção `virtual_sign_camera`. O
+apontamento padrão (`yaw=+30°`, `pitch=+8°`) vem da geometria do regulamento:
+placa sempre à direita, a 475 mm do chão, com a câmera a 180 mm. Ajuste o
+`yaw` depois de ver o enquadramento real na pista.
+
+### Calibração da lente
+
+```bash
+robocar calib camera --chessboard 9x6 --square-mm 25
+```
+
+Precisa de um tabuleiro de xadrez impresso, colado em **superfície rígida**
+(papel ondulado arruína a calibração). Capture ~20 imagens variando bastante e,
+principalmente, **com o tabuleiro nos cantos do quadro** — é lá que a distorção
+de barril se manifesta, e uma calibração feita só com o tabuleiro no centro
+mede quase nada dela.
+
+O comando reporta o erro de reprojeção (RMS). Acima de ~1,0 px, refaça. Ele
+também compara o HFOV medido com o declarado em `config/camera.yaml` e avisa se
+divergirem — resolvendo de vez a dúvida "os 120° são diagonais ou horizontais?".
+
 ### Distorção de barril — cuidado específico desta lente
 
 A 120°, as bordas do quadro têm distorção de barril perceptível. E a placa vive

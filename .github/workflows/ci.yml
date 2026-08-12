@@ -31,6 +31,30 @@ jobs:
         run: python -m pytest -q
         working-directory: jetson
 
+  geometry:
+    name: Geometria da lente (com OpenCV)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      # Job separado para manter o job principal leve. Aqui instalamos OpenCV
+      # só para rodar a validação de ponta a ponta da câmera virtual, que a
+      # matemática pura não alcança: a convenção de rotação do
+      # cv2.initUndistortRectifyMap. Errar a transposição faria a câmera
+      # virtual mirar espelhada, para o lado da rua onde nunca há placa.
+      - name: Instalar dependências
+        run: |
+          python -m pip install --upgrade pip
+          pip install pytest PyYAML numpy opencv-python-headless
+
+      - name: Testes de geometria
+        run: python -m pytest tests/test_lens.py -q
+        working-directory: jetson
+
   firmware:
     name: Firmware — testes de host do protocolo
     runs-on: ubuntu-latest

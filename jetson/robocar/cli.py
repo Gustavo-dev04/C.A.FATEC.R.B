@@ -8,6 +8,7 @@
     robocar dataset verify      confere integridade das sessões
     robocar dataset tag         marca uma sessão (ex.: descartar)
     robocar calib steering      calibra centro e batentes da direção
+    robocar calib camera        calibra intrínsecos e distorção da lente
 
 Cada subcomando importa suas dependências pesadas só quando executado, então
 ``robocar dataset stats`` roda em qualquer máquina, sem OpenCV nem pyserial.
@@ -208,6 +209,16 @@ def cmd_camera(args: argparse.Namespace) -> int:
     if args.focus:
         return _focus_assistant(camera, config)
 
+    virtual = None
+    if args.virtual:
+        try:
+            virtual = _build_virtual_camera(config, camera)
+        except Exception as exc:
+            print(f"câmera virtual indisponível: {exc}", file=sys.stderr)
+            camera.release()
+            return 1
+        print(virtual.describe())
+
     monitor = LoopMonitor()
     print("medindo taxa real — Ctrl+C para sair\n")
 
@@ -227,6 +238,12 @@ def cmd_camera(args: argparse.Namespace) -> int:
                     path.parent.mkdir(parents=True, exist_ok=True)
                     cv2.imwrite(str(path), frame)
                     print(f"\nquadro salvo em {path}")
+                    if virtual is not None:
+                        # Salva a vista virtual ao lado, para comparar o
+                        # enquadramento e a retificação lado a lado.
+                        virtual_path = path.with_name(f"{path.stem}_virtual{path.suffix}")
+                        cv2.imwrite(str(virtual_path), virtual.apply(frame))
+                        print(f"vista virtual salva em {virtual_path}")
     except KeyboardInterrupt:
         pass
     except CameraError as exc:
@@ -260,6 +277,27 @@ def _warn_if_cropped_mode(camera, config) -> None:
             "na placa.\nUse 1640x1232 (campo completo, 30 fps). Ver "
             "docs/02-hardware.md.\n"
         )
+
+
+def _build_virtual_camera(config, camera):
+    """Monta a câmera virtual das placas a partir da calibração salva."""
+    from .config import find_repo_root
+    from .sensors.lens import CameraIntrinsics, virtual_camera_from_config
+
+    path = find_repo_root() / config.get_str(
+        "camera.intrinsics_file", "config/calib/camera_intrinsics.yaml"
+    )
+    intrinsics = CameraIntrinsics.load(path)
+
+    # A calibração pode ter sido feita em outra resolução do mesmo modo.
+    if (intrinsics.width, intrinsics.height) != (camera.width, camera.height):
+        print(
+            f"  calibração feita em {intrinsics.width}x{intrinsics.height}, "
+            f"reescalando para {camera.width}x{camera.height}"
+        )
+        intrinsics = intrinsics.scale_to(camera.width, camera.height)
+
+    return virtual_camera_from_config(config, intrinsics).build()
 
 
 def _focus_assistant(camera, config) -> int:
@@ -677,6 +715,182 @@ def cmd_dataset_tag(args: argparse.Namespace) -> int:
 # ---------------------------------------------------------------------------
 
 
+def cmd_calib_camera(args: argparse.Namespace) -> int:
+    """Calibra os intrínsecos e a distorção da lente com um tabuleiro de xadrez.
+
+    A lente de 120° tem distorção de barril forte. Calibrar permite construir a
+    "câmera virtual" das placas (`robocar camera --virtual`), que entrega a
+    placa retificada e sempre no mesmo enquadramento.
+    """
+    import cv2  # type: ignore[import-not-found]
+    import numpy as np
+
+    from .config import find_repo_root, load_config
+    from .sensors.camera import CameraError, open_camera
+    from .sensors.lens import CameraIntrinsics
+
+    root = find_repo_root()
+    config = load_config(root, profile=args.profile)
+
+    try:
+        cols, rows = (int(v) for v in args.chessboard.lower().split("x"))
+    except ValueError:
+        print(
+            f"--chessboard inválido: {args.chessboard!r} (use algo como 9x6, "
+            "contando CANTOS INTERNOS, não quadrados)",
+            file=sys.stderr,
+        )
+        return 1
+
+    print("=== calibração da lente ===")
+    print(
+        f"Imprima um tabuleiro de xadrez com {cols}x{rows} cantos internos e "
+        f"quadrados de {args.square_mm} mm.\n"
+        "Cole numa superfície RÍGIDA (papel ondulado arruína a calibração).\n"
+    )
+    print(
+        "Capture ~20 imagens variando bastante:\n"
+        "  - tabuleiro perto e longe\n"
+        "  - inclinado para os 4 lados\n"
+        "  - **nos CANTOS do quadro**, não só no centro — é lá que mora a\n"
+        "    distorção de barril que queremos medir\n"
+    )
+    print("ESPAÇO captura  |  ENTER finaliza  |  Ctrl+C aborta\n")
+
+    # Pontos 3D do tabuleiro no seu próprio referencial (z=0, plano).
+    pattern = np.zeros((rows * cols, 3), np.float32)
+    pattern[:, :2] = np.mgrid[0:cols, 0:rows].T.reshape(-1, 2)
+    pattern *= args.square_mm
+
+    object_points: list = []
+    image_points: list = []
+    shape: tuple[int, int] | None = None
+
+    try:
+        camera = open_camera(config, override_backend=args.backend)
+    except CameraError as exc:
+        print(f"erro de câmera: {exc}", file=sys.stderr)
+        return 1
+
+    criteria = (cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER, 30, 0.001)
+
+    try:
+        with camera:
+            while True:
+                frame, _ = camera.read()
+                gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+                shape = gray.shape[::-1]
+
+                found, corners = cv2.findChessboardCorners(
+                    gray,
+                    (cols, rows),
+                    cv2.CALIB_CB_ADAPTIVE_THRESH + cv2.CALIB_CB_NORMALIZE_IMAGE,
+                )
+                status = "TABULEIRO OK " if found else "procurando... "
+                print(
+                    f"  {status} capturas={len(image_points):2d}  "
+                    f"(ESPAÇO captura, ENTER finaliza)",
+                    end="\r",
+                )
+
+                if args.show:
+                    preview = frame.copy()
+                    if found:
+                        cv2.drawChessboardCorners(preview, (cols, rows), corners, found)
+                    cv2.imshow("calibracao — ESPACO captura, ENTER finaliza", preview)
+                    key = cv2.waitKey(1) & 0xFF
+                else:
+                    key = _read_key_nonblocking()
+
+                if key in (13, 10):  # Enter
+                    break
+                if key == 32 and found:  # Espaço
+                    refined = cv2.cornerSubPix(
+                        gray, corners, (11, 11), (-1, -1), criteria
+                    )
+                    object_points.append(pattern.copy())
+                    image_points.append(refined)
+                    print(f"\n  capturada #{len(image_points)}")
+    except KeyboardInterrupt:
+        print("\nabortado.")
+        return 1
+    finally:
+        if args.show:
+            cv2.destroyAllWindows()
+
+    if len(image_points) < 8:
+        print(
+            f"\nApenas {len(image_points)} capturas — insuficiente. "
+            "Use pelo menos 8, idealmente 20.",
+            file=sys.stderr,
+        )
+        return 1
+
+    print(f"\ncalibrando com {len(image_points)} imagens...")
+    rms, matrix, dist, _, _ = cv2.calibrateCamera(
+        object_points, image_points, shape, None, None
+    )
+
+    intrinsics = CameraIntrinsics(
+        fx=float(matrix[0, 0]),
+        fy=float(matrix[1, 1]),
+        cx=float(matrix[0, 2]),
+        cy=float(matrix[1, 2]),
+        width=int(shape[0]),
+        height=int(shape[1]),
+        dist=[float(d) for d in dist.ravel()[:5]],
+        rms_error_px=float(rms),
+        calibrated_at=_now_iso(),
+        sample_count=len(image_points),
+    )
+
+    output = root / config.get_str(
+        "camera.intrinsics_file", "config/calib/camera_intrinsics.yaml"
+    )
+    intrinsics.save(output)
+
+    print("\n=== resultado ===")
+    print(f"  erro de reprojeção (RMS): {rms:.3f} px")
+    print(f"  HFOV medido:              {intrinsics.hfov_deg:.1f}°")
+    print(f"  VFOV medido:              {intrinsics.vfov_deg:.1f}°")
+    print(f"  DFOV medido:              {intrinsics.dfov_deg:.1f}°")
+    print(f"  k1 (barril):              {intrinsics.dist[0]:+.4f}")
+    print(f"  salvo em:                 {output}")
+
+    if rms > 1.0:
+        print(
+            f"\nATENÇÃO: RMS de {rms:.2f} px é alto. Refaça com o tabuleiro em "
+            "superfície rígida, boa iluminação e mais poses nos cantos do quadro."
+        )
+    declared = config.get_float("camera.hardware.fov_horizontal_deg", 0.0)
+    if declared and abs(declared - intrinsics.hfov_deg) > 8:
+        print(
+            f"\nO HFOV medido ({intrinsics.hfov_deg:.0f}°) difere bastante do "
+            f"declarado em config/camera.yaml ({declared:.0f}°). "
+            f"Atualize `camera.hardware.fov_horizontal_deg` — as contas de "
+            f"viabilidade das placas dependem desse número."
+        )
+    return 0
+
+
+def _read_key_nonblocking() -> int:
+    """Lê uma tecla sem bloquear, para o modo sem janela gráfica."""
+    import select as _select
+    import sys as _sys
+
+    if not _sys.stdin.isatty():
+        return -1
+    if _select.select([_sys.stdin], [], [], 0.01)[0]:
+        return ord(_sys.stdin.read(1))
+    return -1
+
+
+def _now_iso() -> str:
+    from datetime import datetime
+
+    return datetime.now().astimezone().isoformat(timespec="seconds")
+
+
 def cmd_calib_steering(args: argparse.Namespace) -> int:
     """Assistente de calibração da direção. **Rode com as rodas no ar.**"""
     from .comms.link import LinkError, SerialLink
@@ -774,6 +988,11 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="medidor de nitidez ao vivo, para ajustar a rosca de foco da lente",
     )
+    camera.add_argument(
+        "--virtual",
+        action="store_true",
+        help="também gera a vista virtual retificada das placas (precisa de calibração)",
+    )
     camera.set_defaults(func=cmd_camera)
 
     # record
@@ -828,6 +1047,23 @@ def build_parser() -> argparse.ArgumentParser:
     steering.add_argument("--port", default=None)
     steering.add_argument("--baud", type=int, default=115200)
     steering.set_defaults(func=cmd_calib_steering)
+
+    calib_camera = calib_sub.add_parser(
+        "camera", help="intrínsecos e distorção da lente (tabuleiro de xadrez)"
+    )
+    calib_camera.add_argument(
+        "--chessboard",
+        default="9x6",
+        help="cantos INTERNOS do tabuleiro, ex.: 9x6 (padrão: 9x6)",
+    )
+    calib_camera.add_argument(
+        "--square-mm", type=float, default=25.0, help="lado do quadrado em mm"
+    )
+    calib_camera.add_argument("--backend", choices=["csi", "v4l2", "file"], default=None)
+    calib_camera.add_argument(
+        "--show", action="store_true", help="abre janela com a prévia (precisa de display)"
+    )
+    calib_camera.set_defaults(func=cmd_calib_camera)
 
     return parser
 
