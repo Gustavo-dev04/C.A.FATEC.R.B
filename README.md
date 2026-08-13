@@ -48,7 +48,10 @@ robocar record --control rc --track minicidade_fatec --direction horario
 
 ## Documentação
 
-Leia nesta ordem — cada documento assume o anterior.
+📋 **[Visão Geral do Projeto](docs/VISAO-GERAL.md)** — comece aqui: objetivo
+final, o que já existe, o que falta e o cronograma até a competição.
+
+Depois, na ordem — cada documento assume o anterior.
 
 | # | Documento | Sobre |
 |---|---|---|
