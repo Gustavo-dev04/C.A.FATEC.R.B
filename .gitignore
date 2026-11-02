@@ -73,3 +73,9 @@ secrets.yaml
 # --- Vista-Sim --------------------------------------------------
 runs/
 *.mp4
+
+# datasets e modelos gerados pelo treino (reproduzíveis: semente + commit)
+dataset/
+dataset_*/
+yolo_*/
+modelos/

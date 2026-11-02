@@ -51,6 +51,12 @@ class OracleConfig:
     # carro sair do centro e o oráculo corrigir (dados de recuperação).
     noise: float = 0.0              # m (desvio-padrão do alvo lateral)
     noise_hold_s: float = 1.5
+    # Limites do desvio: à DIREITA fica o meio-fio — na via de 80 cm o centro
+    # da faixa está a 20 cm dele e o carro tem 12 de meia largura (sobram 8).
+    # À ESQUERDA fica a outra faixa: dá para ir mais (e ensina a voltar da contramão).
+    noise_max_right: float = 0.035  # m
+    noise_max_left: float = 0.06    # m
+    noise_rate: float = 0.05        # m/s — o alvo desliza, não pula (pulo = guinada = quina na borda)
 
 
 @dataclass
@@ -76,6 +82,7 @@ class OraclePilot:
         self.sign_at: dict[Edge, str] = {tuple(s["arrival"]): s["class"] for s in signs}  # type: ignore[misc]
         self.decisions: list[Decision] = []
         self._offset = 0.0
+        self._offset_cur = 0.0
         self._offset_until = 0.0
         self._v = 0.0
 
@@ -122,7 +129,8 @@ class OraclePilot:
             self._v = 0.0
             return 0.0, 0.0
         if c.noise > 0 and t >= self._offset_until:
-            self._offset = float(np.clip(self.rng.normal(0.0, c.noise), -2 * c.noise, 2 * c.noise))
+            self._offset = float(np.clip(self.rng.normal(0.0, c.noise),
+                                         -min(2 * c.noise, c.noise_max_right), min(2 * c.noise, c.noise_max_left)))
             self._offset_until = t + float(self.rng.uniform(0.5, 1.5)) * c.noise_hold_s
 
         # o ponto controlado é o CENTRO do carro, não o eixo
@@ -150,8 +158,12 @@ class OraclePilot:
         # à frente cortaria a curva por ~L²/2R — 7 cm numa conversão de 25 cm.
         fx, fy, th = line.point_at(pr.s)
         _, _, th_ff = line.point_at(pr.s + v * c.ff_time)
-        # nas conversões o desvio some: errar de propósito ali vira outra rua
-        off = self._offset * max(0.0, 1.0 - k_ahead / c.turn_k) if c.noise > 0 else 0.0
+        # Nas conversões o desvio some (errar ali vira outra rua). O desvio
+        # aplicado desliza até o alvo a ``noise_rate`` — nunca pula.
+        alvo = self._offset * max(0.0, 1.0 - k_ahead / c.turn_k) if c.noise > 0 else 0.0
+        rate = c.noise_rate * dt
+        self._offset_cur += float(np.clip(alvo - self._offset_cur, -rate, rate))
+        off = self._offset_cur
         fx -= off * math.sin(th)
         fy += off * math.cos(th)
         ux = v * math.cos(th_ff) + c.k_lat * (fx - cx)

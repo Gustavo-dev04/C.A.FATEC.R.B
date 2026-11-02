@@ -269,3 +269,68 @@ Viés estimado no vermelho com erro < 0,02 °/s (rota da demo: −17,03 contra
 - Calibrar o **fator de escala** no carro: girar no lugar N voltas e comparar
   com 360°·N. É o maior erro que sobra.
 - Medir o viés que anda durante 2 min parado e a posição real da MPU6050.
+
+---
+
+## 02/11/2026 (noite) — Pipeline de treino para o Colab
+
+A equipe aprovou treinar no Colab (100 unidades de computação): redes
+pré-treinadas ajustadas com dados do simulador. ADR 006.
+
+### Feito
+
+- `tools/gerar_dataset.py`: o oráculo dirige rotas sorteadas, em paralelo, e o
+  simulador grava imagens + rótulos (faixa, cruzamento, manobra, placas,
+  semáforo). Câmera com montagem sorteada; ruído de recuperação; vistas
+  deslocadas; semáforo desenhado em estado sorteado.
+- `treino/`: rede de faixa (ResNet18 + manobra), dataset do detector (YOLO),
+  avaliação com a rede dirigindo no simulador.
+- `vista_sim/controle.py`: `PilotoFaixa`, a lei do oráculo escrita no
+  referencial do carro, alimentada pela percepção — vai para o carro.
+- `env.step(..., render=False)`, `env.rotulos_em(pose)`, `kappa_ahead` na verdade.
+- `notebooks/treino_vista.ipynb`: do clone ao ONNX no Drive.
+
+### Números
+
+| Medida | Valor |
+|---|---|
+| `PilotoFaixa` com a verdade (40 rotas) | 40/40 completas, `e_y` máx. 3,0 cm |
+| Oráculo com ruído de recuperação (40 rotas) | 40/40 completas, `e_y` p95 3,8 cm |
+| Geração (8 episódios, 4 núcleos) | 11.389 imagens em 67 s, ~24 KB cada |
+| Cobertura de `e_y` (p5–p95) | real −2,0…+2,5 cm; deslocadas −8,9…+14,8 cm |
+
+### Problemas, causas e soluções
+
+**1. Metade dos episódios com ruído saía da pista.**
+- *Causa 1:* o alvo lateral do ruído pulava (ex.: +1,6 → −4,2 cm); o controle
+  do centro do carro responde a um pulo com uma guinada de ~20° e a quina da
+  frente tocava a borda.
+- *Causa 2:* ±6 cm para a direita não cabe na via de 80 cm (o centro da faixa
+  está a 20 cm do meio-fio; o carro tem 12 de meia largura).
+- *Solução:* desvio desliza a 5 cm/s (inclusive quando some perto das
+  conversões); até 3,5 cm para o meio-fio e 6 cm para a contramão. 23/40 →
+  29/40 → 40/40.
+
+**2. O `e_y` dos dados ficava em ±2,5 cm — a rede nunca veria o carro torto.**
+- *Solução:* vistas deslocadas renderizadas com rótulos exatos (técnica do
+  PilotNet, sem aproximação de imagem).
+
+**3. 40 % das imagens descartadas no dataset do detector.**
+- *Causa:* placas minúsculas e distantes contavam como "ambíguas".
+- *Solução:* só é ambígua placa grande o bastante e meio escondida; minúscula é
+  ignorada.
+
+**4. Semáforo vermelho/amarelo raro nos dados.**
+- *Causa:* só existe na espera da largada (poucos quadros, um ângulo só).
+- *Solução:* depois da largada o DESENHO do semáforo é sorteado; o carro
+  obedece ao real.
+
+**5. Risco no Colab: memória compartilhada dos workers.**
+- *Causa:* lotes float32 de 236 MB × 12 workers.
+- *Solução:* workers mandam uint8; aumento de dados em lote na GPU.
+
+### Pendências
+
+- Rodar o notebook no Colab e trazer `avaliacao_simulador.json`.
+- Detector no laço (manobra pela placa detectada + `rules.decide`).
+- Imagens reais da pista caseira para ajuste fino quando o carro existir.

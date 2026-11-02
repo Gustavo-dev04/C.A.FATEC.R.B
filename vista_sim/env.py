@@ -41,6 +41,8 @@ from .route import RoutePath
 from .scenario import Scenario, ScenarioConfig, generate
 from .track import Track
 
+KAPPA_AHEAD_M = 0.40          # janela da curvatura "à frente" (rótulo e controle)
+
 
 @dataclass
 class SimConfig:
@@ -97,6 +99,7 @@ class Truth:
     e_y: float                # m, + = centro do carro à esquerda do centro da faixa
     e_psi: float              # rad, + = apontando para a esquerda da faixa
     curvature: float
+    kappa_ahead: float        # 1/m, curvatura média nos próximos 40 cm da rota (+ = esquerda)
     on_carpet: bool
     in_own_lane: bool
     traffic_light: str
@@ -132,6 +135,9 @@ class VistaSimEnv:
         self.renderer = FastRenderer(self.track, self.cam_params, rng=self.rng, car_body=(body, p.height))
         self.scenario: Scenario | None = None
         self.route: RoutePath | None = None
+        # Só para GERAR DADOS do detector: desenha o semáforo neste estado sem
+        # mudar o semáforo de verdade (que é o que o carro obedece).
+        self.tl_override: str | None = None
         self._reset_state()
 
     # ---------------- ciclo ----------------
@@ -182,8 +188,12 @@ class VistaSimEnv:
         obs, objs = self._observe()
         return obs, {"truth": self._truth(objs), "telemetry": self._telemetry(), "scenario": scenario}
 
-    def step(self, rpm_left: float, rpm_right: float):
-        """Envia o rpm alvo de cada roda — o contrato do ESP32 — e avança um quadro."""
+    def step(self, rpm_left: float, rpm_right: float, render: bool = True):
+        """Envia o rpm alvo de cada roda — o contrato do ESP32 — e avança um quadro.
+
+        ``render=False`` pula a câmera (``obs`` = ``None``, sem objetos na
+        verdade): para gerar dados salvando 1 quadro a cada N, ~3× mais rápido.
+        """
         self._queue.append((self.t + self.cfg.latency_s, float(rpm_left), float(rpm_right)))
         frame_dt = 1.0 / self.cfg.camera_hz
         n = max(1, int(round(frame_dt / self.cfg.physics_dt)))
@@ -206,7 +216,7 @@ class VistaSimEnv:
             self.t += dt
 
         self.seq += 1
-        obs, objs = self._observe()
+        obs, objs = self._observe() if render else (None, [])
         truth = self._truth(objs)
         done, reason = self._check_done(truth)
         info = {"reason": reason, "events": self._new_events}
@@ -240,8 +250,36 @@ class VistaSimEnv:
 
     def _observe(self):
         s = self.car.state
-        img, info = self.renderer.render((s.x, s.y, s.yaw), self.traffic_light_state())
+        tl = self.tl_override or self.traffic_light_state()
+        img, info = self.renderer.render((s.x, s.y, s.yaw), tl)
         return img, info["objects"]
+
+    def rotulos_em(self, x: float, y: float, yaw: float, s_hint: float) -> dict[str, Any]:
+        """Rótulos de faixa para uma pose QUALQUER perto da rota (vistas
+        deslocadas na geração de dados): mesmas definições da verdade."""
+        rt = self.route
+        assert rt is not None
+        d = self.car_params.center_x
+        pr = rt.project(x + d * math.cos(yaw), y + d * math.sin(yaw), s_hint, back=0.8, ahead=0.8)
+        nj = rt.next_junction(pr.s)
+        c, sn = math.cos(yaw), math.sin(yaw)
+        p = self.car_params
+        hw = p.width / 2
+        foot = np.array([[p.front_overhang, hw], [p.front_overhang, -hw], [-p.rear_overhang, -hw],
+                         [-p.rear_overhang, hw]]) @ np.array([[c, sn], [-sn, c]]) + [x, y]
+        return {
+            "e_y": pr.e_y, "e_psi": wrap_angle(yaw - pr.heading), "kappa": self._kappa_ahead(pr.s),
+            "dist": nj.s_in - pr.s if nj else None, "maneuver": nj.maneuver if nj else "frente",
+            "sign": nj.sign if nj else None, "dentro": rt.edge_at(pr.s) is None, "s": pr.s,
+            "on_carpet": bool(np.all(self.track.on_carpet(foot))),
+        }
+
+    def _kappa_ahead(self, s: float, ahead: float = KAPPA_AHEAD_M) -> float:
+        """Curvatura média à frente: Δrumo da rota em ``ahead`` metros / ``ahead``."""
+        line = self.route.line
+        _, _, h0 = line.point_at(s)
+        _, _, h1 = line.point_at(s + ahead)
+        return wrap_angle(h1 - h0) / ahead
 
     def _yaw_rate(self) -> float:
         s = self.car.state
@@ -280,6 +318,7 @@ class VistaSimEnv:
             rpm_left=s.left.omega * RPM, rpm_right=s.right.omega * RPM,
             route_s=proj.s, route_length=rt.length, edge=edge[0] if edge else None,
             e_y=proj.e_y, e_psi=e_psi, curvature=proj.curvature,
+            kappa_ahead=self._kappa_ahead(proj.s),
             on_carpet=on, in_own_lane=abs(proj.e_y) <= rt.half_lane(proj.s),
             traffic_light=self.traffic_light_state(), next_junction=nxt, objects=objs,
             gyro_bias=self.imu.gyro_bias,
