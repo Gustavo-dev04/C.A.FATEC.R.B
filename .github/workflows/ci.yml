@@ -1,0 +1,27 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  vista-sim:
+    name: Vista-Sim — lint e testes
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Instalar
+        run: pip install -e ".[dev]"
+      - name: Lint
+        run: ruff check vista_sim tests tools
+      - name: O mapa versionado bate com o gerador
+        run: |
+          python -m vista_sim.maps.build_master --out /tmp/mapa.yaml
+          diff -u maps/robocar_master.yaml /tmp/mapa.yaml
+      - name: Testes
+        run: pytest -q
+      - name: Benchmark (informativo)
+        run: python -m tools.sim_demo --bench
