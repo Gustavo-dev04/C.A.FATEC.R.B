@@ -334,3 +334,33 @@ pré-treinadas ajustadas com dados do simulador. ADR 006.
 - Rodar o notebook no Colab e trazer `avaliacao_simulador.json`.
 - Detector no laço (manobra pela placa detectada + `rules.decide`).
 - Imagens reais da pista caseira para ajuste fino quando o carro existir.
+
+---
+
+## 02/11/2026 (noite) — Primeiro treino da rede de faixa no Colab
+
+Rodado pela equipe com o notebook (`EPOCAS_FAIXA = 20`). Valores **lidos do
+gráfico** do notebook; os exatos estão em `faixa_historico.json` no Drive.
+
+| Validação (episódios nunca vistos) | época 0 | época 20 |
+|---|---|---|
+| perda (treino / validação) | 0,31 / 0,16 | ~0,015 / ~0,049 |
+| erro de `e_y` na faixa | 1,1 cm | ~0,3 cm |
+| erro de `e_y` dentro do cruzamento | 1,95 cm | ~1,0 cm |
+| erro de `e_ψ` na faixa | 1,2° | ~0,65° |
+| erro da distância ao cruzamento | 11,6 cm | ~3,6 cm |
+
+Leitura:
+
+- A validação estabiliza por volta das épocas 12–15 e **não sobe** — sem
+  sobreajuste destrutivo, mas sem ganho com mais épocas.
+- Perda de treino 3× menor que a de validação: o próximo ganho vem de **mais
+  episódios** (variedade), não de mais épocas.
+- No cruzamento o erro é ~3× o da faixa: sem linha pintada, a rede usa a
+  manobra e a geometria do cruzamento. É onde o giroscópio deve ajudar.
+- São números simulador → simulador. O que decide é a rede dirigindo
+  (`avaliacao_simulador.json`) e, depois, imagens reais.
+
+### Pendências
+
+- Resultado do YOLO (mAP50 por classe) e da rede dirigindo no simulador.
