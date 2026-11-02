@@ -115,6 +115,41 @@ class CarParams:
 
 
 @dataclass(frozen=True)
+class ImuParams:
+    """MPU6050: números do datasheet + o que só se mede no carro."""
+
+    model: str
+    x: float                     # posição em base_link (m)
+    y: float
+    gyro_range: float            # rad/s
+    gyro_noise_density: float    # rad/s/√Hz
+    gyro_initial_bias: float     # rad/s (tolerância de fábrica)
+    gyro_scale_tolerance: float  # fração
+    gyro_bias_drift: float       # rad/s em ~100 s
+    accel_range: float           # m/s²
+    accel_noise_density: float   # m/s²/√Hz
+    accel_initial_bias: tuple[float, float, float]   # m/s²
+    dlpf_hz: float
+
+    @classmethod
+    def from_yaml(cls, d: dict[str, Any]) -> ImuParams:
+        dps = math.pi / 180.0
+        g = 9.80665
+        return cls(
+            model=str(d["model"]), x=float(d["x"]), y=float(d.get("y", 0.0)),
+            gyro_range=float(d["gyro_range_dps"]) * dps,
+            gyro_noise_density=float(d["gyro_noise_density_dps_rthz"]) * dps,
+            gyro_initial_bias=float(d["gyro_initial_bias_dps"]) * dps,
+            gyro_scale_tolerance=float(d.get("gyro_scale_tolerance", 0.0)),
+            gyro_bias_drift=float(d.get("gyro_bias_drift_dps", 0.0)) * dps,
+            accel_range=float(d["accel_range_g"]) * g,
+            accel_noise_density=float(d["accel_noise_density_ug_rthz"]) * 1e-6 * g,
+            accel_initial_bias=tuple(float(v) * 1e-3 * g for v in d.get("accel_initial_bias_mg", [0, 0, 0])),  # type: ignore[arg-type]
+            dlpf_hz=float(d.get("dlpf_hz", 98.0)),
+        )
+
+
+@dataclass(frozen=True)
 class CameraParams:
     # intrínsecos na resolução de referência
     fx: float
@@ -170,6 +205,10 @@ class CameraParams:
 
 def load_car(root: Path | None = None) -> CarParams:
     return CarParams.from_yaml(_load((root or repo_root()) / "config" / "car.yaml"))
+
+
+def load_imu(root: Path | None = None) -> ImuParams:
+    return ImuParams.from_yaml(_load((root or repo_root()) / "config" / "car.yaml")["imu"])
 
 
 def load_camera(root: Path | None = None) -> CameraParams:

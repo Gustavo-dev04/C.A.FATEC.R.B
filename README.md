@@ -55,7 +55,8 @@ obs, telemetria, verdade, fim, info = env.step(rpm_esq, rpm_dir)
 ```
 
 O Vista recebe `obs` (imagem) e `telemetria` (rpm **medido pelo encoder**,
-ticks e odometria integrada dos ticks, como no ESP32 real). `verdade` — pose,
+ticks, leitura bruta da **MPU6050** e a odometria: deslocamento pelos encoders,
+rumo pelo giroscópio com o viés calibrado na espera do vermelho). `verdade` — pose,
 `e_y`/`e_ψ` do centro do carro, próximo cruzamento com placa e manobra, placas
 visíveis com caixa e fração visível, semáforo — serve para medir o Vista e
 rotular dados, **nunca** como entrada dele. `info["events"]` traz
@@ -98,6 +99,7 @@ simulador muda junto.
 | [ADR 002](docs/adr/002-camera-fisheye-e-chao-por-grade.md) | Câmera fisheye em NumPy e chão por grade |
 | [ADR 003](docs/adr/003-carro-em-rotacao-de-roda.md) | Carro comandado em rotação de roda; o centro do carro segue a faixa |
 | [ADR 004](docs/adr/004-cenarios-placas-e-iluminacao.md) | Cenários sorteados: rota, placas pela regra, luz com sombra |
+| [ADR 005](docs/adr/005-imu-mpu6050-e-odometria.md) | MPU6050 simulada; rumo pelo giroscópio, calibrado no vermelho |
 
 ## O que o regulamento diz e o simulador do organizador não
 

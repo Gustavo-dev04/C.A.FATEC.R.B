@@ -136,6 +136,10 @@ def overlay(img: np.ndarray, truth, telem, cmd: tuple[float, float], fps: float,
         (f"rpm alvo  E {cmd[0]:5.0f}  D {cmd[1]:5.0f}", (255, 255, 255)),
         (f"rpm real  E {truth.rpm_left:5.0f}  D {truth.rpm_right:5.0f}", (255, 255, 255)),
         (f"encoder   E {telem.rpm_left:5.0f}  D {telem.rpm_right:5.0f}", (200, 200, 200)),
+        (f"giro z {math.degrees(telem.gyro_z):+7.1f} deg/s  vies {math.degrees(telem.gyro_bias_est):+6.2f}"
+         + ("" if telem.imu_calibrated else " (calibrando)"), (200, 200, 200)),
+        (f"rumo odo {math.degrees(math.remainder(telem.psi - truth.yaw, 2 * math.pi)):+5.1f} deg do real",
+         (200, 200, 200)),
         (f"e_y={truth.e_y * 100:+5.1f} cm  e_psi={math.degrees(truth.e_psi):+5.1f} deg", (255, 255, 255)),
         (f"semaforo: {truth.traffic_light}", tl),
     ]
@@ -246,7 +250,16 @@ def run_route(out_dir: Path, seed: int, noise: float, video: bool = True) -> dic
         "tempo_de_prova_s": round(env.t - env.green_at, 2),
         "e_y_rms_cm": round(float(np.sqrt(np.mean(e**2))) * 100, 2),
         "e_y_max_cm": round(float(np.max(np.abs(e))) * 100, 2),
-        "erro_odometria_fim_m": round(math.hypot(telem.x - truth.x, telem.y - truth.y), 3),
+        "erro_odometria_fim_m": {
+            "encoders_e_giroscopio": round(math.hypot(telem.x - truth.x, telem.y - truth.y), 3),
+            "so_encoders": round(math.hypot(env.odometry.enc_pose[0] - truth.x,
+                                            env.odometry.enc_pose[1] - truth.y), 3),
+        },
+        "mpu6050": {
+            "vies_real_dps": round(math.degrees(truth.gyro_bias), 3),
+            "vies_estimado_no_vermelho_dps": round(math.degrees(telem.gyro_bias_est), 3),
+            "fator_de_escala": round(env.imu.gyro_scale, 4),
+        },
         "rodas": {"raio_esq_mm": round(env.car.state.left.radius * 1000, 3),
                   "raio_dir_mm": round(env.car.state.right.radius * 1000, 3),
                   "patinacao": round(env.car.state.left.slip, 4)},

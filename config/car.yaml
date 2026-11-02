@@ -123,11 +123,14 @@ imu:
   gyro_range_dps: 250         # 131 LSB/(°/s); omega_max = 3 rad/s ≈ 172 °/s cabe
   gyro_noise_density_dps_rthz: 0.005
   gyro_initial_bias_dps: 20.0 # tolerância de fábrica do zero (ZRO): ±20 °/s → CALIBRAR SEMPRE
+  gyro_scale_tolerance: 0.03  # ±3 % no fator de escala — a calibração parada NÃO corrige
   accel_range_g: 2
   accel_noise_density_ug_rthz: 400
-  # Viés que sobra depois de calibrar parado (média do giroscópio enquanto
-  # o semáforo está vermelho). ESTIMATIVA — medir: carro parado 60 s, log.
-  gyro_bias_residual_dps: 0.05
+  accel_initial_bias_mg: [50, 50, 80]   # x, y, z
+  dlpf_hz: 98                 # filtro digital (DLPF_CFG = 2) → ruído do giro ≈ 0,05 °/s RMS
+  # Quanto o viés anda durante uma prova (~100 s) DEPOIS de calibrar parado
+  # (temperatura, tempo). ESTIMATIVA — medir: carro parado 2 min, log.
+  gyro_bias_drift_dps: 0.05
 
 # --- bateria --------------------------------------------------
 battery:

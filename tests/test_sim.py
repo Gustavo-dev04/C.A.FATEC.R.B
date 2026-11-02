@@ -225,13 +225,54 @@ def test_comando_chega_com_atraso(env):
     assert tel.rpm_left == pytest.approx(150.0, rel=0.1)   # o encoder mede
 
 
-def test_odometria_vem_dos_encoders_e_nao_da_verdade(env):
+def _espera_calibrar(env, segundos=1.0):
+    """Parado (como no vermelho): a odometria estima o viés do giroscópio."""
+    for _ in range(int(segundos * env.cfg.camera_hz)):
+        _, tel, tr, _, _ = env.step(0.0, 0.0)
+    return tel, tr
+
+
+def test_odometria_vem_dos_sensores_e_nao_da_verdade(env):
     env.reset(seed=4)
+    tel, _ = _espera_calibrar(env)
+    assert tel.imu_calibrated
     for _ in range(45):
         _, tel, tr, _, _ = env.step(120.0, 120.0)
     erro = math.hypot(tel.x - tr.x, tel.y - tr.y)
     assert erro < 0.01                                # reto: odometria quase exata
     assert (tel.x, tel.y) != (tr.x, tr.y)             # mas é OUTRA medida
+
+
+def test_parado_no_vermelho_calibra_o_vies_do_giroscopio():
+    """MPU6050 sai de fábrica com até ±20 °/s de viés. Parado, a média do
+    giroscópio É o viés — e o rumo não anda enquanto as rodas não andam."""
+    env = VistaSimEnv(config=SimConfig(lighting=False, tl_red_s=(3.0, 3.0)),
+                      camera=load_camera().scaled(96, 72), seed=0)
+    _, info = env.reset(seed=11)
+    psi0 = info["telemetry"].psi
+    tel, tr = _espera_calibrar(env, 2.5)
+    assert abs(tr.gyro_bias) > math.radians(0.5)      # o viés sorteado é grande...
+    assert tel.imu_calibrated
+    assert math.degrees(abs(tel.gyro_bias_est - tr.gyro_bias)) < 0.02   # ...e foi medido
+    assert tel.psi == pytest.approx(psi0)             # parado, o rumo não girou
+    assert math.degrees(tel.gyro_z) == pytest.approx(math.degrees(tr.gyro_bias), abs=0.1)
+
+
+def test_giroscopio_corrige_o_rumo_que_os_encoders_erram():
+    """Roda direita 0,5 % maior e rpm iguais: o carro curva sem os encoders
+    perceberem. O giroscópio mede a rotação do corpo e acompanha."""
+    env = VistaSimEnv(config=SimConfig(lighting=False, randomize_car=False, tl_red_s=(1.0, 1.0)),
+                      camera=load_camera().scaled(96, 72), seed=0)
+    env.reset(seed=12)
+    env.imu.gyro_scale = 1.0                          # isola o efeito do viés calibrado
+    env.car.state.right.radius *= 1.005
+    _espera_calibrar(env, 1.5)
+    for _ in range(150):                              # 5 s a ~0,5 m/s
+        _, tel, tr, _, _ = env.step(147.0, 147.0)
+    so_enc = env.odometry.enc_pose[2]
+    real = tr.yaw
+    assert abs(math.degrees(math.remainder(so_enc - real, 2 * math.pi))) > 2.0
+    assert abs(math.degrees(math.remainder(tel.psi - real, 2 * math.pi))) < 0.5
 
 
 def test_sair_da_pista_encerra_o_episodio(env):
@@ -297,3 +338,42 @@ def test_render_e_deterministico(env):
     a, _ = env.reset(seed=8)
     b, _ = env.reset(seed=8)
     assert np.array_equal(a, b)
+
+
+# --- MPU6050 ---------------------------------------------------------------
+
+
+@pytest.fixture()
+def mpu():
+    from vista_sim.config import load_imu
+    from vista_sim.imu import Mpu6050
+
+    return Mpu6050(load_imu(), rng=np.random.default_rng(3), randomize=True)
+
+
+def test_giroscopio_parado_tem_o_ruido_do_datasheet(mpu):
+    """0,005 °/s/√Hz com filtro de 98 Hz → ~0,05 °/s RMS (datasheet: 0,05)."""
+    g = np.array([mpu.sample(0.0, 0.0, 0.0, 0.0, 0.005)[0] for _ in range(4000)])
+    assert math.degrees(g.std()) == pytest.approx(0.05, rel=0.2)
+    assert abs(math.degrees(mpu.p.gyro_initial_bias)) == pytest.approx(20.0)
+
+
+def test_giroscopio_satura_no_fundo_de_escala(mpu):
+    gz, _ = mpu.sample(0.0, 8.0, 0.0, 0.0, 0.005)     # 458 °/s > 250
+    assert math.degrees(gz) == pytest.approx(250.0, abs=0.01)
+
+
+def test_fator_de_escala_sobra_depois_de_calibrar_o_vies(mpu):
+    mpu.gyro_scale, mpu.gyro_bias = 1.03, 0.1
+    g = np.mean([mpu.sample(0.3, 1.0, 0.0, 0.0, 0.005)[0] for _ in range(400)])
+    assert g - mpu.gyro_bias == pytest.approx(1.03, abs=0.005)
+
+
+def test_acelerometro_parado_le_a_gravidade_e_na_curva_a_centripeta(mpu):
+    mpu.accel_bias = np.zeros(3)
+    a0 = np.mean([mpu.sample(0.0, 0.0, 0.0, 0.0, 0.005)[1] for _ in range(400)], axis=0)
+    assert a0 == pytest.approx([0.0, 0.0, 9.80665], abs=0.01)
+    v, w = 0.4, 0.8
+    a = np.mean([mpu.sample(v, w, 0.0, 0.0, 0.005)[1] for _ in range(400)], axis=0)
+    assert a[1] == pytest.approx(v * w, abs=0.01)                   # v·ω para a esquerda
+    assert a[0] == pytest.approx(-w * w * mpu.p.x, abs=0.01)        # braço de alavanca

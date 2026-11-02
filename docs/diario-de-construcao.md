@@ -229,3 +229,43 @@ seguindo a trilha com 1,4 cm de erro.**
   conferir.
 - Viés residual depois de calibrar (`gyro_bias_residual_dps`) é estimativa —
   medir com o carro parado 60 s.
+
+---
+
+## 02/11/2026 (noite) — MPU6050 no simulador
+
+Aprovado pela equipe: simular a IMU já, antes da S4.
+
+### Feito
+
+- `vista_sim/imu.py`: sensor MPU6050 (viés de fábrica ±20 °/s, escala ±3 %,
+  ruído do datasheet, viés que anda, ADC de 16 bits, saturação ±250 °/s,
+  acelerômetro com braço de alavanca) e a odometria que vai para o carro
+  (deslocamento pelos encoders, rumo pelo giroscópio, viés calibrado parado).
+- Telemetria com leitura bruta, viés estimado e se já calibrou; verdade com o
+  viés real. Demo mostra o giroscópio e as duas odometrias. ADR 005.
+- 79 testes.
+
+### Números (40 rotas sorteadas)
+
+| | só encoders | encoders + giro | + escala calibrada |
+|---|---|---|---|
+| erro de posição no fim (mediana / pior) | 1,84 / 9,31 m | 0,51 / 1,35 m | 0,19 / 0,77 m |
+| maior erro de rumo (mediana / pior) | 24,5° / 108,7° | 5,9° / 39,3° | 2,2° / 9,3° |
+
+Viés estimado no vermelho com erro < 0,02 °/s (rota da demo: −17,03 contra
+−17,04 °/s reais). Custo da IMU: 0,09 ms por quadro.
+
+### Problemas, causas e soluções
+
+**1. O rumo girava ~6° com o carro parado na largada.**
+- *Causa:* a odometria só considerava o carro "parado" depois de 0,3 s sem
+  ticks; nesses 0,3 s iniciais integrava o viés ainda cru (até 20 °/s).
+- *Solução:* na largada o carro está parado por definição — a odometria já
+  começa no estado parado. Teste trava o rumo constante no vermelho.
+
+### Pendências
+
+- Calibrar o **fator de escala** no carro: girar no lugar N voltas e comparar
+  com 360°·N. É o maior erro que sobra.
+- Medir o viés que anda durante 2 min parado e a posição real da MPU6050.

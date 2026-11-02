@@ -11,8 +11,9 @@ cada roda — o mesmo que o ESP32 recebe e persegue com o PID. ``step_vw(v, ω)`
 existe só como atalho e converte para rpm antes (``car.wheel_rpm``).
 
 O que o Vista recebe (``obs`` + ``telem``) é o que receberia do carro real: a
-imagem da câmera e a telemetria do ESP32 — rpm MEDIDO pelo encoder, ticks e
-odometria integrada dos ticks. A pose verdadeira só aparece em ``truth``, que
+imagem da câmera e a telemetria — rpm MEDIDO pelo encoder, ticks, leitura bruta
+da MPU6050 e a odometria (deslocamento dos encoders, rumo do giroscópio com o
+viés calibrado na espera do vermelho). A pose verdadeira só aparece em ``truth``, que
 serve para medir o Vista e rotular dados; o Vista nunca deve lê-la.
 
 A cada ``reset(seed)`` sai um cenário novo (``vista_sim.scenario``): rota pela
@@ -32,8 +33,9 @@ from typing import Any
 import numpy as np
 
 from .car import RPM, DiffDriveCar, wheel_rpm
-from .config import CameraParams, CarParams, load_camera, load_car, repo_root
+from .config import CameraParams, CarParams, load_camera, load_car, load_imu, repo_root
 from .geometry import wrap_angle
+from .imu import Mpu6050, WheelGyroOdometry
 from .render_fast import FastRenderer, PostFx
 from .route import RoutePath
 from .scenario import Scenario, ScenarioConfig, generate
@@ -50,6 +52,7 @@ class SimConfig:
     tl_red_s: tuple[float, float] = (2.0, 6.0)
     tl_yellow_s: tuple[float, float] = (1.0, 3.0)
     randomize_car: bool = True           # raio de roda e patinação por episódio
+    randomize_imu: bool = True           # viés, fator de escala e viés do acelerômetro por episódio
     lighting: bool = True
     randomize_fx: bool = False
     off_route_m: float = 0.30            # |e_y| acima disso = fora da rota
@@ -59,17 +62,21 @@ class SimConfig:
 
 @dataclass
 class Telemetry:
-    """Espelha o quadro ``T,...`` do ESP32 (CLAUDE.md §4.1)."""
+    """Espelha o quadro ``T,...`` do ESP32 (CLAUDE.md §4.1) + a MPU6050."""
 
     seq: int
     t: float
-    x: float                  # odometria (m) — integrada dos encoders
-    y: float
+    x: float                  # odometria (m): deslocamento dos encoders,
+    y: float                  #   rumo do giroscópio (vista_sim.imu)
     psi: float                # rad
     rpm_left: float           # rpm MEDIDO pelo encoder (quantizado)
     rpm_right: float
     ticks_left: int
     ticks_right: int
+    gyro_z: float             # rad/s, leitura BRUTA da MPU6050 (média do quadro, com viés)
+    accel: tuple[float, float, float]   # m/s² (x frente, y esquerda, z cima), bruto
+    gyro_bias_est: float      # rad/s, viés estimado com o carro parado
+    imu_calibrated: bool      # já houve parada suficiente para estimar o viés?
 
 
 @dataclass
@@ -95,6 +102,7 @@ class Truth:
     traffic_light: str
     next_junction: dict[str, Any] | None
     objects: list[dict[str, Any]] = field(default_factory=list)
+    gyro_bias: float = 0.0    # rad/s, viés VERDADEIRO da MPU6050 agora
 
 
 class VistaSimEnv:
@@ -114,6 +122,10 @@ class VistaSimEnv:
         self.cfg = config or SimConfig()
         self.rng = np.random.default_rng(seed)
         self.car = DiffDriveCar(self.car_params, rng=self.rng, randomize=self.cfg.randomize_car)
+        self.imu_params = load_imu(root)
+        self.imu = Mpu6050(self.imu_params, rng=self.rng, randomize=self.cfg.randomize_imu)
+        p = self.car_params
+        self.odometry = WheelGyroOdometry(p.track_width, p.wheel_radius, p.counts_per_rev)
         p = self.car_params
         body = np.array([[p.front_overhang, p.width / 2], [-p.rear_overhang, p.width / 2],
                          [-p.rear_overhang, -p.width / 2], [p.front_overhang, -p.width / 2]])
@@ -129,8 +141,8 @@ class VistaSimEnv:
         self.seq = 0
         self._queue: deque[tuple[float, float, float]] = deque()
         self._applied = (0.0, 0.0)
-        self._odo = [0.0, 0.0, 0.0]
-        self._last_ticks = (0, 0)
+        self._imu_acc = [0.0, np.zeros(3), 0]      # soma do giro, soma da aceleração, n
+        self._gz_last, self._acc_last = 0.0, np.array([0.0, 0.0, 9.80665])
         self._tl_green_at = 0.0
         self._tl_yellow_at = 0.0
         self._s = 0.0
@@ -144,6 +156,7 @@ class VistaSimEnv:
         if seed is not None:
             self.rng = np.random.default_rng(seed)
             self.car.rng = self.rng
+            self.imu.rng = self.rng
             self.renderer.rng = self.rng
         self._reset_state()
         if scenario is None:
@@ -156,7 +169,8 @@ class VistaSimEnv:
 
         st = self.track.start
         self.car.reset(st["x"], st["y"], st["yaw"])
-        self._odo = [st["x"], st["y"], st["yaw"]]
+        self.imu.reset()
+        self.odometry.reset(st["x"], st["y"], st["yaw"])
         self._tl_yellow_at = float(self.rng.uniform(*self.cfg.tl_red_s))
         self._tl_green_at = self._tl_yellow_at + float(self.rng.uniform(*self.cfg.tl_yellow_s))
         if self.cfg.randomize_fx:
@@ -179,8 +193,16 @@ class VistaSimEnv:
                 _, l_c, r_c = self._queue.popleft()
                 self._applied = (l_c, r_c)
                 self.car.command_wheels(l_c, r_c)
+            s0 = self.car.state
+            v0, w0 = s0.v, self._yaw_rate()
             self.car.step(dt)
-            self._integrate_odometry()
+            v1, w1 = self.car.state.v, self._yaw_rate()
+            gz, acc = self.imu.sample(v1, w1, (v1 - v0) / dt, (w1 - w0) / dt, dt)
+            st = self.car.state
+            self.odometry.update(st.ticks_left, st.ticks_right, gz, dt)
+            self._imu_acc[0] += gz
+            self._imu_acc[1] = self._imu_acc[1] + acc
+            self._imu_acc[2] += 1
             self.t += dt
 
         self.seq += 1
@@ -221,30 +243,21 @@ class VistaSimEnv:
         img, info = self.renderer.render((s.x, s.y, s.yaw), self.traffic_light_state())
         return img, info["objects"]
 
-    def _integrate_odometry(self) -> None:
-        """Odometria a partir dos ticks e do raio NOMINAL — como no ESP32.
-
-        Raio real diferente e patinação fazem a odometria divergir da verdade,
-        exatamente como no carro.
-        """
-        s, p = self.car.state, self.car_params
-        dl_t, dr_t = s.ticks_left - self._last_ticks[0], s.ticks_right - self._last_ticks[1]
-        if dl_t == 0 and dr_t == 0:
-            return
-        self._last_ticks = (s.ticks_left, s.ticks_right)
-        m_per_tick = 2.0 * math.pi * p.wheel_radius / p.counts_per_rev
-        dl, dr = dl_t * m_per_tick, dr_t * m_per_tick
-        ds = 0.5 * (dl + dr)
-        dpsi = (dr - dl) / p.track_width
-        x, y, psi = self._odo
-        x += ds * math.cos(psi + dpsi / 2)
-        y += ds * math.sin(psi + dpsi / 2)
-        self._odo = [x, y, wrap_angle(psi + dpsi)]
+    def _yaw_rate(self) -> float:
+        s = self.car.state
+        return (s.right.ground_speed - s.left.ground_speed) / self.car_params.track_width
 
     def _telemetry(self) -> Telemetry:
         s = self.car.state
-        return Telemetry(self.seq, round(self.t, 4), *self._odo, s.left.rpm_meas, s.right.rpm_meas,
-                         s.ticks_left, s.ticks_right)
+        gz_sum, acc_sum, n = self._imu_acc
+        if n:
+            self._gz_last, self._acc_last = gz_sum / n, acc_sum / n
+            self._imu_acc = [0.0, np.zeros(3), 0]
+        od = self.odometry
+        return Telemetry(self.seq, round(self.t, 4), *od.pose, s.left.rpm_meas, s.right.rpm_meas,
+                         s.ticks_left, s.ticks_right, gyro_z=float(self._gz_last),
+                         accel=tuple(float(a) for a in self._acc_last),  # type: ignore[arg-type]
+                         gyro_bias_est=od.bias, imu_calibrated=od.calibrated)
 
     def _truth(self, objs) -> Truth:
         s, rt = self.car.state, self.route
@@ -269,6 +282,7 @@ class VistaSimEnv:
             e_y=proj.e_y, e_psi=e_psi, curvature=proj.curvature,
             on_carpet=on, in_own_lane=abs(proj.e_y) <= rt.half_lane(proj.s),
             traffic_light=self.traffic_light_state(), next_junction=nxt, objects=objs,
+            gyro_bias=self.imu.gyro_bias,
         )
 
     def _check_done(self, tr: Truth) -> tuple[bool, str]:
