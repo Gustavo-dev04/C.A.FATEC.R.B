@@ -199,3 +199,33 @@ seguindo a trilha com 1,4 cm de erro.**
 - Zona morta, constante de tempo e ganhos do PID são estimados — medir no carro.
 - Perguntas 8–12 em `docs/regulamento.md` (faixa de pedestre, cruzamento sem
   placa, proibição ambígua, fim da prova, maquetes).
+
+---
+
+## 02/11/2026 (noite) — Duas pendências fechadas
+
+### Decidido pela equipe
+
+- **ESP32 recebe rpm de cada roda.** É exatamente o contrato do `env.step`
+  (ADR 003); nada muda no simulador.
+- **IMU é MPU6050**, não o BNO085 do REV03. `config/car.yaml` atualizado com os
+  números do datasheet.
+
+### O que a troca muda
+
+- **Sem magnetômetro e sem fusão pronta:** o rumo vem da integração do
+  giroscópio z, que deriva com o viés. O BNO085 entregaria um quatérnio já
+  fundido.
+- **Viés de fábrica de até ±20 °/s** (tolerância do zero no datasheet). Sem
+  calibrar, isso dá até 20° de erro por segundo. A largada ajuda: o carro
+  fica parado no vermelho por alguns segundos — é a janela para medir o viés
+  (média do giroscópio parado) antes de sair.
+- Fundo de escala de ±250 °/s basta: o limite de giro do Vista é 3 rad/s ≈
+  172 °/s.
+
+### Pendências
+
+- Posição da MPU6050 no carro: o `x = 0,217` é o lugar do BNO085 no REV03 —
+  conferir.
+- Viés residual depois de calibrar (`gyro_bias_residual_dps`) é estimativa —
+  medir com o carro parado 60 s.

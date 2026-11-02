@@ -13,7 +13,8 @@ tem direção, curva pela diferença entre as rodas.
 | 🏁 Prova | **05/12/2026** |
 | 🚗 Carro | tração diferencial, 400 × 241 mm (REV03) |
 | 📷 Câmera | IMX219 fisheye 120°, 1640×1232 @ 30 |
-| 🧠 Computação | Jetson Orin Nano + ESP32-S3 |
+| 🧠 Computação | Jetson Orin Nano + ESP32-S3 (rpm de cada roda) |
+| 🧭 IMU | MPU6050 — 6 eixos, sem magnetômetro |
 
 ## Estratégia
 

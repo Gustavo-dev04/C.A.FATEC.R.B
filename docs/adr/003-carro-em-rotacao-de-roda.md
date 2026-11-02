@@ -54,6 +54,6 @@ realmente faz e o que dá errado no carro de verdade:
 - Patinação e tolerância fazem a odometria divergir da verdade, como no carro.
 - Os números de motor (`deadband_duty`, `mechanical_time_constant`, ganhos do
   PID) são **estimados**. Medir no carro (S4) e atualizar `config/car.yaml`.
-- **Pergunta em aberto:** o firmware do ESP32 vai receber rpm por roda (como
-  aqui) ou `(v, ω)`? Se for `(v, ω)`, a conversão acima vai para o firmware e
-  nada muda no simulador.
+- **Confirmado pela equipe (02/11/2026):** o firmware do ESP32 recebe **rpm de
+  cada roda** — o mesmo contrato do `env.step`. A conversão `(v, ω)` → rpm,
+  quando usada, fica do lado do Vista.
