@@ -364,3 +364,63 @@ Leitura:
 ### Pendências
 
 - Resultado do YOLO (mAP50 por classe) e da rede dirigindo no simulador.
+
+---
+
+## 02/11/2026 (noite) — Detector e rede de faixa dirigindo: o primeiro resultado de verdade
+
+Rodado pela equipe no Colab (A100), 150 episódios.
+
+### Detector (YOLO11n, validação em episódios nunca vistos)
+
+| | P | R | mAP50 | mAP50-95 |
+|---|---|---|---|---|
+| todas | 0,916 | 0,868 | **0,948** | **0,827** |
+| semáforo vermelho / amarelo / verde | 0,98–0,99 | 0,99 | 0,994–0,995 | 0,92–0,93 |
+| `seguir_em_frente` | 0,924 | 0,746 | 0,895 | 0,768 |
+| `proibido_virar_direita` | 0,942 | 0,716 | 0,913 | 0,736 |
+
+Semáforo resolvido no simulador. As placas que mais escapam (recall ~0,72–0,75)
+são, provavelmente, as pequenas e distantes; precisão alta = quase não inventa
+placa. Inferência: 1,0 ms por imagem na A100.
+
+### Rede de faixa dirigindo (10 sementes nunca vistas; manobra e semáforo da verdade)
+
+| | rotas completas | `e_y` RMS mediano |
+|---|---|---|
+| teto (mesmo piloto com a verdade) | **10/10** | 0,28 cm |
+| rede de faixa | **4/10** | 1,75 cm |
+
+Falhas: 5 × `desrespeitou_placa` (o carro saiu > 30 cm da trilha **dentro do
+cruzamento** e entrou na rua errada — a manobra vinha da verdade, então não é
+leitura de placa) e 1 × `saiu_da_pista`.
+
+### Diagnóstico
+
+Erro de 0,3 cm por imagem e 4/10 rotas é o sintoma clássico de **mudança de
+distribuição**: os dados vêm do oráculo dirigindo bem; quando a rede dirige,
+erra um pouco, chega a situações que nunca viu (sobretudo dentro do
+cruzamento, sem linha pintada) e erra mais.
+
+Experimento: o piloto com a verdade + ruído gaussiano no `e_y`/`e_ψ`
+(20 sementes):
+
+| ruído `e_y` (faixa / cruzamento) | sem filtro | com filtro complementar (odometria + giro) |
+|---|---|---|
+| 0,4 / 1,3 cm (≈ erro da rede na validação) | 17/20 | 16/20 |
+| 0,8 / 2,5 cm | 8/20 | **14/20** |
+
+- Ruído branco do tamanho do erro de validação ainda dá 17/20 — a rede (4/10)
+  erra **mais** dirigindo do que na validação: confirma a mudança de
+  distribuição.
+- O controle do centro do carro amplifica ruído (1 cm de `e_y` ≈ 0,3 rad/s de
+  giro); um filtro com o movimento do próprio carro segura isso quando o erro
+  cresce.
+
+### Próximo passo proposto (aguardando ok da equipe)
+
+1. **DAgger**: a rede dirige no simulador, o oráculo assume quando ela se
+   afasta, as imagens dessas situações entram no treino com o rótulo exato;
+   2–3 rodadas.
+2. **Filtro** de `e_y`/`e_ψ` com odometria + giroscópio entre a rede e o
+   controle.
