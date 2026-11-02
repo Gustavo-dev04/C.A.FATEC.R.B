@@ -424,3 +424,45 @@ Experimento: o piloto com a verdade + ruído gaussiano no `e_y`/`e_ψ`
    2–3 rodadas.
 2. **Filtro** de `e_y`/`e_ψ` com odometria + giroscópio entre a rede e o
    controle.
+
+---
+
+## 02/11/2026 (noite) — DAgger e filtro implementados; teste local do DAgger não melhorou
+
+### Feito
+
+- `FiltroFaixa` (encoders + giroscópio prevêem, a rede corrige), `PilotoRede`,
+  DAgger no gerador (`--piloto-onnx`), ajuste fino a partir de checkpoint,
+  validação dividida por bloco de sementes, seção de DAgger no notebook e
+  opção de continuar de um modelo salvo. ADR 007.
+
+### Teste local de uma rodada de DAgger (modelo FRACO: do zero, 96×128, CPU)
+
+| | rotas completas (8) | progresso médio |
+|---|---|---|
+| antes, sem filtro | 0/8 | 11 % |
+| antes, com filtro | 0/8 | 15 % |
+| depois de 1 rodada (6.120 imagens, 75 % com a rede dirigindo) | 0/8 | 11 % |
+
+**Não melhorou.** Olhando quadro a quadro a falha (semente 100000, conversão à
+esquerda em T_ne), dentro do cruzamento a rede diz κ ≈ 0–0,2 (real 1,3),
+`e_ψ` ≈ 0° (real −12° → −41°), "dentro?" 3 % (real: sim) e distância ~1–1,7 m
+(real: já passou). Ela acha que ainda está numa reta antes do cruzamento: não
+percebe que entrou nem que devia virar. O carro segue reto e cai na rua errada.
+
+Dentro do cruzamento não há linha pintada: a trilha certa é uma curva
+**invisível** que a rede teria de imaginar a partir da manobra. O modelo forte
+do Colab erra muito menos, mas as 5 falhas dele também foram ali.
+
+### Próximo passo proposto (aguardando ok)
+
+**Atravessar o cruzamento por odometria + giroscópio**, usando o mapa:
+
+1. o Vista sabe em que rua está seguindo o **grafo do mapa** com as próprias
+   decisões (larga numa rua conhecida; cada manobra leva a uma rua conhecida) —
+   isso também dá as saídas do cruzamento, que `rules.decide` precisa para as
+   placas de proibição;
+2. na entrada do cruzamento (rede: distância → 0), a trajetória da conversão
+   vem do mapa, posicionada pelo `e_y`/`e_ψ` da rede na faixa (onde ela erra
+   0,3 cm), e é seguida por encoders + giroscópio (~1,5 m: erro de ~1 cm);
+3. na saída, a rede volta a mandar.
