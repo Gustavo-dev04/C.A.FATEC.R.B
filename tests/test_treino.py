@@ -145,3 +145,69 @@ def test_rede_de_faixa_treina_exporta_e_dirige(dataset, tmp_path):
     assert o.shape == (5,) and 0.0 <= o[4] <= 1.0
     with torch.no_grad():
         assert np.isfinite(o).all()
+
+
+# --- filtro e DAgger ---------------------------------------------------------
+
+
+def _filtro():
+    from vista_sim.config import load_car
+    from vista_sim.controle import FiltroFaixa
+
+    return FiltroFaixa(load_car())
+
+
+def test_filtro_atenua_o_ruido_da_rede():
+    from vista_sim.controle import Percepcao
+
+    f, rng = _filtro(), np.random.default_rng(0)
+    saida = []
+    for _ in range(600):                                  # parado na faixa, rede ruidosa (1 cm)
+        m = Percepcao(0.02 + rng.normal(0, 0.01), rng.normal(0, 0.02), 0.0, 3.0, False)
+        saida.append(f.atualizar(m, v=0.5, omega=0.0, dt=1 / 30).e_y)
+    s = np.array(saida[100:])
+    assert s.mean() == pytest.approx(0.02, abs=0.003)
+    assert s.std() < 0.5 * 0.01
+
+
+def test_filtro_nao_atrasa_a_curva_como_uma_media_movel():
+    """Carro girando de verdade (0,6 rad/s) e a rede medindo certo: o filtro
+    acompanha porque PREVÊ o giro pelo giroscópio; uma média móvel com o
+    mesmo ganho ficaria ~3,4° atrás."""
+    from vista_sim.controle import Percepcao
+
+    f = _filtro()
+    w, dt, g = 0.6, 1 / 30, f.cfg.ganho_faixa
+    verdade, media = 0.0, 0.0
+    for _ in range(30):
+        verdade += w * dt
+        p = f.atualizar(Percepcao(0.0, verdade, 0.0, 3.0, False), 0.0, w, dt)
+        media += g * (verdade - media)
+    assert abs(p.e_psi - verdade) < 1e-3
+    assert verdade - media > 0.05
+
+
+def test_dagger_a_rede_dirige_e_o_oraculo_assume(dataset, tmp_path):
+    pytest.importorskip("torch")
+    pytest.importorskip("onnx")
+    pytest.importorskip("onnxruntime")
+    from tools.gerar_dataset import gerar
+    from treino.faixa import RedeFaixa, exportar_onnx
+
+    onnx = tmp_path / "faixa.onnx"
+    exportar_onnx(RedeFaixa(pretrained=False), (48, 64), onnx)   # rede SEM treino: erra muito
+    out = tmp_path / "dag"
+    meta = gerar(out, episodios=1, semente_inicial=500000, passo=3, workers=1, res=(160, 120),
+                 max_quadros=360, vistas_extras=0, piloto_onnx=onnx, log=lambda *_: None)
+    assert meta["dagger_desta_geracao"] == str(onnx)
+    with open(out / "rotulos.csv", encoding="utf-8") as fh:
+        pilotos = {r["piloto"] for r in csv.DictReader(fh)}
+    assert pilotos == {"rede", "oraculo"}                 # a rede ruim é socorrida pelo oráculo
+
+
+def test_divisao_por_bloco_mantem_a_validacao_do_oraculo():
+    base = list(range(150))
+    tr0, va0 = dividir_sementes(base, 0.1)
+    tr1, va1 = dividir_sementes(base + list(range(500000, 500040)), 0.1)
+    assert va0 <= va1 and va0 == {s for s in va1 if s < 100000}
+    assert any(s >= 500000 for s in va1)

@@ -214,8 +214,12 @@ def avaliar(modelo: nn.Module, loader: DataLoader, device: str) -> dict[str, flo
 def treinar(pasta: Path, saida: Path, epocas: int = 20, lote: int = 128, lr: float = 5e-4,
             tamanho: tuple[int, int] = (240, 320), val_frac: float = 0.1, workers: int = 4,
             device: str | None = None, pretrained: bool = True, limite: int | None = None,
-            log: Callable[[str], Any] = print) -> dict[str, Any]:
-    """Treina, guarda o melhor (perda de validação) em ``saida/faixa_melhor.pt``."""
+            inicial: Path | None = None, log: Callable[[str], Any] = print) -> dict[str, Any]:
+    """Treina, guarda o melhor (perda de validação) em ``saida/faixa_melhor.pt``.
+
+    ``inicial``: checkpoint para CONTINUAR (ajuste fino de uma rodada de
+    DAgger) em vez de partir da ImageNet. Use ``lr`` menor (~2e-4).
+    """
     device = device or ("cuda" if torch.cuda.is_available() else "cpu")
     saida = Path(saida)
     saida.mkdir(parents=True, exist_ok=True)
@@ -234,7 +238,14 @@ def treinar(pasta: Path, saida: Path, epocas: int = 20, lote: int = 128, lr: flo
                        persistent_workers=workers > 0)
     dl_va = DataLoader(FaixaDataset(pasta, va, tamanho), lote, num_workers=workers, pin_memory=pin)
 
-    modelo = RedeFaixa(pretrained).to(device).to(memory_format=torch.channels_last)
+    modelo = RedeFaixa(pretrained and inicial is None)
+    if inicial is not None:
+        ck = torch.load(inicial, map_location="cpu", weights_only=False)
+        if tuple(ck["tamanho"]) != tuple(tamanho):
+            raise ValueError(f"o checkpoint é de {tuple(ck['tamanho'])}, não {tuple(tamanho)}")
+        modelo.load_state_dict(ck["modelo"])
+        log(f"continuando de {inicial}")
+    modelo = modelo.to(device).to(memory_format=torch.channels_last)
     otim = torch.optim.AdamW(modelo.parameters(), lr=lr, weight_decay=1e-4)
     passos = max(1, epocas * len(dl_tr))
     aquec = min(500, passos // 10)

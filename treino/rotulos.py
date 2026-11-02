@@ -29,7 +29,7 @@ COLUNAS = (
     "arquivo", "semente", "quadro", "t",
     "e_y", "e_psi", "kappa", "dist_cruzamento", "no_cruzamento", "manobra",
     "placa_proxima", "semaforo", "v", "omega", "rpm_e", "rpm_d",
-    "ruido", "pitch_deg", "vista", "fim",
+    "ruido", "pitch_deg", "vista", "piloto", "fim",
 )
 
 
@@ -37,9 +37,20 @@ def dividir_sementes(sementes: list[int], val_frac: float) -> tuple[set[int], se
     """Treino × validação POR EPISÓDIO, nunca por quadro.
 
     Quadros do mesmo episódio são quase iguais; misturá-los entre treino e
-    validação mede memória, não generalização. As últimas sementes vão para a
-    validação.
+    validação mede memória, não generalização.
+
+    A divisão é feita por BLOCO de 100.000 sementes (0–99.999: dados do
+    oráculo; 500.000+: rodadas de DAgger): em cada bloco, as últimas
+    ``val_frac`` vão para a validação. Assim os dados do oráculo têm sempre a
+    mesma validação, rodada após rodada, e o DAgger tem a sua.
     """
-    s = sorted(set(sementes))
-    n_val = max(1, round(len(s) * val_frac)) if len(s) > 1 else 0
-    return set(s[: len(s) - n_val]), set(s[len(s) - n_val:])
+    blocos: dict[int, list[int]] = {}
+    for s in sorted(set(sementes)):
+        blocos.setdefault(s // 100_000, []).append(s)
+    tr: set[int] = set()
+    va: set[int] = set()
+    for lista in blocos.values():
+        n_val = max(1, round(len(lista) * val_frac)) if len(lista) > 1 else 0
+        tr.update(lista[: len(lista) - n_val])
+        va.update(lista[len(lista) - n_val:])
+    return tr, va

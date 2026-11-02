@@ -1,9 +1,9 @@
 """O modelo dirigindo no simulador — a métrica que importa.
 
 Erro médio de validação diz quanto a rede acerta numa imagem; não diz se o
-carro chega ao fim da rota. Aqui a rede de faixa fecha a malha:
+carro chega ao fim da rota. Aqui a rede de faixa fecha a malha, como no carro:
 
-    câmera → rede (e_y, e_ψ, κ, dist, dentro?) → PilotoFaixa → rpm → carro
+    câmera → rede → filtro (encoders + giroscópio) → PilotoFaixa → rpm → carro
 
 Nesta etapa, **semáforo e manobra vêm da verdade** (leitura perfeita de placa
 e semáforo) — isola a rede de faixa. Quando o detector entrar no laço, a
@@ -14,21 +14,84 @@ Use sementes que NÃO estavam no treino (padrão: a partir de 100000).
 
 from __future__ import annotations
 
+import json
 import math
 import time
 from collections import Counter
 from collections.abc import Callable
+from pathlib import Path
 from typing import Any
 
+import cv2
 import numpy as np
 
-from vista_sim.config import CameraParams
-from vista_sim.controle import Percepcao, PilotoFaixa
+from vista_sim.car import RPM
+from vista_sim.config import CameraParams, CarParams
+from vista_sim.controle import FiltroFaixa, Percepcao, PilotoFaixa
 from vista_sim.env import SimConfig, VistaSimEnv
 from vista_sim.track import Track
 
+from .rotulos import MANOBRAS
+
 # preditor(imagem_bgr, manobra) → [e_y, e_ψ, κ, dist, p_dentro]
 Preditor = Callable[[np.ndarray, str], np.ndarray]
+
+
+class PreditorOnnx:
+    """A rede de faixa em ONNX (o MESMO arquivo que vai para a Jetson, antes
+    do TensorRT), via onnxruntime. Sem PyTorch."""
+
+    def __init__(self, caminho: Path | str, threads: int | None = None) -> None:
+        import onnxruntime as ort
+
+        caminho = Path(caminho)
+        meta = json.loads(caminho.with_suffix(".json").read_text(encoding="utf-8"))
+        self.h, self.w = meta["altura"], meta["largura"]
+        so = ort.SessionOptions()
+        if threads:
+            so.intra_op_num_threads = threads
+            so.inter_op_num_threads = 1
+        prov = [p for p in ("CUDAExecutionProvider", "CPUExecutionProvider") if p in ort.get_available_providers()]
+        self.sess = ort.InferenceSession(str(caminho), so, providers=prov)
+
+    def __call__(self, img_bgr: np.ndarray, manobra: str) -> np.ndarray:
+        img = cv2.cvtColor(cv2.resize(img_bgr, (self.w, self.h), interpolation=cv2.INTER_AREA), cv2.COLOR_BGR2RGB)
+        x = (img.astype(np.float32) / 255.0).transpose(2, 0, 1)[None]
+        m = np.zeros((1, 3), np.float32)
+        m[0, MANOBRAS.index(manobra)] = 1.0
+        return self.sess.run(None, {"imagem": x, "manobra": m})[0][0]
+
+
+class PilotoRede:
+    """O Vista em miniatura: imagem → rede → filtro → controle → rpm.
+
+    ``filtro=True`` usa a velocidade dos encoders e o giro da MPU6050 (viés
+    calibrado no vermelho) da TELEMETRIA — o que o carro real tem.
+    """
+
+    def __init__(self, preditor: Preditor, car: CarParams, filtro: bool = True) -> None:
+        self.pred = preditor
+        self.car = car
+        self.piloto = PilotoFaixa(car)
+        self.filtro = FiltroFaixa(car) if filtro else None
+
+    def reset(self) -> None:
+        self.piloto.reset()
+        if self.filtro:
+            self.filtro.reset()
+
+    def perceber(self, obs: np.ndarray, tel, manobra: str, dt: float = 1 / 30) -> Percepcao:
+        o = self.pred(obs, manobra)
+        p = Percepcao(float(o[0]), float(o[1]), float(o[2]), float(o[3]), bool(o[4] > 0.5))
+        if self.filtro is not None:
+            v = 0.5 * (tel.rpm_left + tel.rpm_right) / RPM * self.car.wheel_radius
+            w = tel.gyro_z - tel.gyro_bias_est
+            p = self.filtro.atualizar(p, v, w, dt)
+        return p
+
+    def act(self, obs: np.ndarray, tel, manobra: str, go: bool, dt: float = 1 / 30):
+        p = self.perceber(obs, tel, manobra, dt)
+        return self.piloto.act(p, manobra, go, dt), p
 
 
 def percepcao_da_verdade(tr) -> Percepcao:
@@ -38,7 +101,7 @@ def percepcao_da_verdade(tr) -> Percepcao:
 
 
 def rodar(preditor: Preditor | None, sementes: list[int], camera: CameraParams | None = None,
-          track: Track | None = None, config: SimConfig | None = None,
+          track: Track | None = None, config: SimConfig | None = None, filtro: bool = True,
           log: Callable[[str], Any] = print) -> dict[str, Any]:
     """``preditor=None`` usa a verdade de campo: o teto (e teste do controle)."""
     cfg = config or SimConfig(randomize_fx=True)
@@ -47,22 +110,22 @@ def rodar(preditor: Preditor | None, sementes: list[int], camera: CameraParams |
         env = VistaSimEnv(track=track, camera=camera, config=cfg, seed=seed)
         track = env.track
         obs, info = env.reset(seed=seed)
-        tr = info["truth"]
-        piloto = PilotoFaixa(env.car_params)
+        tr, tel = info["truth"], info["telemetry"]
+        piloto_v = PilotoFaixa(env.car_params)
+        piloto_r = PilotoRede(preditor, env.car_params, filtro) if preditor is not None else None
         erros: list[tuple[float, float]] = []
         ey: list[float] = []
         t0, n = time.perf_counter(), 0
         while True:
             nj = tr.next_junction
             manobra = nj["maneuver"] if nj else "frente"
-            if preditor is None:
-                p = percepcao_da_verdade(tr)
-            else:
-                o = preditor(obs, manobra)
-                p = Percepcao(float(o[0]), float(o[1]), float(o[2]), float(o[3]), bool(o[4] > 0.5))
-                erros.append((p.e_y - tr.e_y, math.remainder(p.e_psi - tr.e_psi, 2 * math.pi)))
             go = tr.traffic_light == "verde"
-            obs, _, tr, done, inf = env.step(*piloto.act(p, manobra, go))
+            if piloto_r is None:
+                cmd = piloto_v.act(percepcao_da_verdade(tr), manobra, go)
+            else:
+                cmd, p = piloto_r.act(obs, tel, manobra, go)
+                erros.append((p.e_y - tr.e_y, math.remainder(p.e_psi - tr.e_psi, 2 * math.pi)))
+            obs, tel, tr, done, inf = env.step(*cmd)
             n += 1
             if go:
                 ey.append(tr.e_y)
@@ -92,5 +155,6 @@ def rodar(preditor: Preditor | None, sementes: list[int], camera: CameraParams |
         "progresso_medio": round(float(np.mean([r["progresso"] for r in res])), 3),
         "motivos": dict(Counter(r["motivo"] for r in res)),
         "e_y_rms_cm_mediana": float(np.median([r["e_y_rms_cm"] for r in res if r["e_y_rms_cm"] is not None] or [np.nan])),
+        "filtro": filtro if preditor is not None else None,
         "por_rota": res,
     }

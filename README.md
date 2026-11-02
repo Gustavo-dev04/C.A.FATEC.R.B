@@ -70,9 +70,11 @@ igual **não** é andar reto. Ver [ADR 003](docs/adr/003-carro-em-rotacao-de-rod
 
 [`notebooks/treino_vista.ipynb`](notebooks/treino_vista.ipynb) — abra no Colab
 com GPU e `Executar tudo`: gera os dados no simulador, ajusta uma ResNet18
-(faixa) e um YOLO11n (placas e semáforo) pré-treinados, exporta ONNX e mede a
-rede **dirigindo no simulador**. Os modelos vão para o Drive. Ver
-[ADR 006](docs/adr/006-treino-com-dados-do-simulador.md).
+(faixa) e um YOLO11n (placas e semáforo) pré-treinados, exporta ONNX, mede a
+rede **dirigindo no simulador** e faz rodadas de **DAgger** (a rede dirige, o
+oráculo socorre, essas situações viram treino). Os modelos vão para o Drive.
+Ver [ADR 006](docs/adr/006-treino-com-dados-do-simulador.md) e
+[ADR 007](docs/adr/007-dagger-e-filtro.md).
 
 ```bash
 pip install -e ".[treino]"
@@ -115,6 +117,7 @@ simulador muda junto.
 | [ADR 004](docs/adr/004-cenarios-placas-e-iluminacao.md) | Cenários sorteados: rota, placas pela regra, luz com sombra |
 | [ADR 005](docs/adr/005-imu-mpu6050-e-odometria.md) | MPU6050 simulada; rumo pelo giroscópio, calibrado no vermelho |
 | [ADR 006](docs/adr/006-treino-com-dados-do-simulador.md) | Treino: redes pré-treinadas ajustadas com dados do simulador |
+| [ADR 007](docs/adr/007-dagger-e-filtro.md) | DAgger (a rede dirige, o oráculo socorre) e filtro com encoders + giroscópio |
 
 ## O que o regulamento diz e o simulador do organizador não
 
