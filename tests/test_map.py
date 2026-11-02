@@ -12,6 +12,7 @@ import numpy as np
 import pytest
 
 from vista_sim.maps.build_master import REGULATION, build
+from vista_sim.roads import RoadNetwork
 from vista_sim.track import SIGN_CLASSES
 
 
@@ -91,11 +92,47 @@ def test_placa_tem_150_mm_com_a_base_a_400_mm(mapa):
     Logo o CENTRO fica a 475 mm. O .obj do organizador tem Ø300 com centro
     a 550 mm; o CLAUDE.md anotou 'centro a 400' — ambos divergem.
     """
-    for s in mapa["signs"]:
-        assert s["diameter"] == pytest.approx(0.150)
-        assert s["bottom_height"] == pytest.approx(0.400)
-        assert s["bottom_height"] + s["diameter"] / 2 == pytest.approx(0.475)
-        assert s["class"] in SIGN_CLASSES
+    s = mapa["sign_spec"]
+    assert s["diameter"] == pytest.approx(0.150)
+    assert s["bottom_height"] == pytest.approx(0.400)
+    assert s["bottom_height"] + s["diameter"] / 2 == pytest.approx(0.475)
+
+
+def test_placa_400_mm_antes_do_cruzamento_a_direita(mapa):
+    """3.5.2: '400 mm antes do cruzamento, do lado direito, tangenciando a calçada'.
+
+    A posição é CALCULADA para cada aproximação de cada cruzamento — vale para
+    qualquer rota que a organização montar no dia.
+    """
+    net = RoadNetwork(mapa["roads"])
+    spec = mapa["sign_spec"]
+    for nid in net.nodes:
+        for arr in net.arrivals(nid):
+            p, h, w = net.approach_frame(arr)              # entrada do cruzamento
+            sg = net.sign_pose(arr, spec["before_crossing"], spec["outward"])
+            road = net.roads[arr[0]]
+            # 400 mm ANTES, medidos ao longo da rua
+            s_in = road.length - net._trim[(road.id, "b")] if arr[1] else net._trim[(road.id, "a")]
+            s_sg = s_in - 0.400 if arr[1] else s_in + 0.400
+            cx, cy, hh = road.pose_at(s_sg)
+            hh = hh if arr[1] else hh + math.pi
+            d = np.array([sg["x"] - cx, sg["y"] - cy])
+            assert d @ [math.cos(hh), math.sin(hh)] == pytest.approx(0.0, abs=1e-6)
+            assert d @ [-math.sin(hh), math.cos(hh)] == pytest.approx(-(w / 2 + spec["outward"]))   # à direita
+            assert math.cos(sg["facing_yaw"] - hh) == pytest.approx(-1.0)                          # virada para quem chega
+
+
+def test_toda_placa_fica_fora_da_rua(mapa):
+    """Em qualquer aproximação — inclusive nas vias com dobra em volta da ilha —
+    a placa cai na calçada/ilha/canteiro, nunca no asfalto."""
+    from vista_sim.track import Track
+
+    tr = Track(mapa)
+    for nid in tr.network.nodes:
+        for arr in tr.network.arrivals(nid):
+            sg = tr.network.sign_pose(arr, mapa["sign_spec"]["before_crossing"], mapa["sign_spec"]["outward"],
+                                      lambda x, y: bool(tr.on_carpet_exact(np.array([[x, y]]))[0]))
+            assert not tr.on_carpet_exact(np.array([[sg["x"], sg["y"]]]))[0], (nid, arr)
 
 
 # --- semáforo -------------------------------------------------------------
@@ -129,11 +166,34 @@ def test_sequencia_do_semaforo(mapa):
 # --- faixas ---------------------------------------------------------------
 
 
-def test_faixas_do_anel_ficam_no_meio_de_cada_metade(mapa):
-    lanes = {ln["id"]: np.asarray(ln["points"]) for ln in mapa["lanes"]}
-    # faixa anti-horária = EXTERNA (mão direita indo para oeste no anel de cima)
-    assert lanes["anel_antihorario"][:, 1].max() == pytest.approx(4.25, abs=0.01)
-    assert lanes["anel_horario"][:, 1].max() == pytest.approx(3.75, abs=0.01)
+def test_faixa_da_direita_fica_no_meio_da_metade_da_rua(mapa):
+    """Mão direita (3.4.1): indo para oeste no anel de cima, a faixa é a EXTERNA."""
+    net = RoadNetwork(mapa["roads"])
+    oeste = net.lane(("anel_T_ne_T_no", True))
+    leste = net.lane(("anel_T_ne_T_no", False))
+    assert oeste[:, 1].mean() == pytest.approx(4.25, abs=0.01)
+    assert leste[:, 1].mean() == pytest.approx(3.75, abs=0.01)
+    assert oeste[-1, 0] < oeste[0, 0]                         # vai para oeste
+
+
+def test_todo_cruzamento_tem_saida_sem_retorno(mapa):
+    net = RoadNetwork(mapa["roads"])
+    assert len(net.nodes) == 12                                # 8 T no anel + 4 em volta da ilha
+    for nid in net.nodes:
+        for arr in net.arrivals(nid):
+            ops = net.options(arr)
+            assert 2 <= len(ops) <= 3
+            assert set(ops) <= {"frente", "esquerda", "direita"}
+
+
+def test_conversao_emenda_as_duas_faixas(mapa):
+    net = RoadNetwork(mapa["roads"])
+    for nid in net.nodes:
+        for arr in net.arrivals(nid):
+            for dep in net.options(arr).values():
+                mv = net.movement(arr, dep)
+                assert np.allclose(mv[0], net.lane(arr)[-1])
+                assert np.allclose(mv[-1], net.lane(dep)[0])
 
 
 def test_largada_esta_na_faixa_da_direita(mapa):

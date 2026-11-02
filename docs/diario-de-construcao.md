@@ -87,3 +87,115 @@ figura do semáforo.**
   no carro?
 - Intrínsecos são estimados — calibrar com tabuleiro (F1).
 - Perguntas à organização em `docs/regulamento.md`.
+
+---
+
+## 02/11/2026 (tarde) — Vista-Sim S1.1: cidade inteira, placas, iluminação e rotação de roda
+
+Retorno do Guga sobre o primeiro vídeo: (1) o simulador precisa entender
+**iluminação** — mesmo branca, ela muda com a oclusão do ambiente; (2) o carro
+**não respeitou as placas**; (3) não havia **faixa de pedestre**; (4) **não
+entrou na cidade**; (5) o carro tem que ser simulado **todo em diferença de
+rotação**.
+
+### Feito
+
+- **Rotação de roda** (`car.py`): `env.step(rpm_esq, rpm_dir)`; PID por roda a
+  100 Hz, zona morta, encoder de 440 ticks, raios ±0,5 % e patinação sorteados
+  por episódio. `(v, ω)` virou só atalho. ADR 003.
+- **Malha viária** (`roads.py`): 12 cruzamentos, 20 ruas de mão dupla, faixas,
+  conversões e a pose de **toda** placa pela regra 3.5.2.
+- **Regras de placa** (`rules.py`): obrigação, proibição, "sem placa = em
+  frente" (política nossa). O oráculo decide com elas; o Vista vai importá-las.
+- **Cenários** (`scenario.py`): rota pela cidade, placas que levam à rota
+  (conferidas), distratoras, zebras, maquetes, público, lâmpadas. ADR 004.
+- **Iluminação** (`lighting.py`): sombras de prédios, pessoas, placas e
+  semáforo; sombra do próprio carro; rótulo de fração visível da placa.
+- **Fiscal da rota** (`env.py` + `route.py`): `desrespeitou_placa`,
+  `placa_respeitada`, `saiu_da_pista`, `rota_completa`…
+- Oráculo novo: segue a rota decidindo pela placa e comanda rpm por roda.
+- Demo com câmera + mapa visto de cima; 73 testes.
+
+### Números
+
+| Medida | Valor |
+|---|---|
+| Rotas sorteadas (200 sementes) | 25–66 m, 6–15 cruzamentos, **99 % entram no centro** |
+| Oráculo nas 200 rotas | **200/200 completas**, 0 placa desrespeitada, 0 saída |
+| `e_y` do oráculo (semente 139) | RMS 0,41 cm, máx. 2,78 cm |
+| Rota da demo (semente 139) | 37 m, 11 cruzamentos (6 no centro), 10 placas, 93 s |
+| Render só chão 320×240 | 837 passos/s |
+| Render cidade inteira com luz 320×240 | 241 passos/s |
+| `env.step` completo 410×308 | **204 passos/s = 6,8× tempo real** |
+| Carro com roda 0,5 % maior, rpm iguais | desvia 29 cm em 5 m |
+
+### Problemas, causas e soluções
+
+**1. Com a cidade inteira, o simulador caiu para 77 passos/s.**
+- *Causa medida (perfil):* faces de prédio projetadas uma a uma (2,5 ms),
+  "está no carpete?" por polígono (1,4 ms), sombra do carro num grid 4×4 m com
+  3 desfoques (1,5 ms), luz amostrada por quadro.
+- *Solução:* faces numa projeção só; máscara do carpete de 1 cm; grid da sombra
+  2×2 m com 1 desfoque e recalculado a cada 4 cm / 2°; luz do ambiente
+  **assada na textura** uma vez por cenário; cores dos objetos pré-calculadas.
+  77 → 204 passos/s no `env.step`. Ainda abaixo dos 1.000 do S1 com a cidade
+  cheia — para gerar dados, 1 processo por núcleo.
+
+**2. Placas caindo no asfalto nas vias em volta da ilha.**
+- *Causa:* a via tem uma dobra; eu recuava 400 mm em linha reta usando o rumo
+  da dobra. Depois, ao lado da ilha redonda, a borda reta da via deixa uma
+  fresta de asfalto.
+- *Solução:* 400 mm medidos ao longo da rua; e a placa é empurrada para fora
+  até sair do asfalto ("tangenciando a calçada"). Teste em toda aproximação.
+
+**3. "Gancho" na conversão para a via ao lado da ilha.**
+- *Causa:* a faixa de saída começava em cima da dobra (rua de 1,0 m estreitando
+  para 0,8 m); a Bézier herdava o rumo torto e passava do canto.
+- *Solução:* dobra a 45° dentro do cruzamento, rumo da rua numa base de 40 cm,
+  Bézier com controles proporcionais às pernas.
+
+**4. O carro raspava a ponta do canteiro ou a borda nas conversões, mesmo
+seguindo a trilha com 1,4 cm de erro.**
+- *Causa:* o eixo é traseiro; com o eixo na trilha, a frente (34 cm adiante)
+  balança para fora.
+- *Tentativa que piorou:* terminar a curva 30 cm antes — fechou a curva e
+  34 de 40 rotas saíram pela borda. Revertido.
+- *Solução:* varri o contorno do carro pelas 96 conversões com o ponto de
+  controle em várias posições: eixo 4 falhas, câmera 12, **centro do carro (14
+  cm) 0**. O oráculo controla o centro (linearização de ponto fora do eixo) e
+  a verdade de campo é medida nele. ADR 003.
+
+**5. Mirar num alvo à frente cortava a curva em 7 cm.**
+- *Causa:* perseguir um ponto L adiante numa curva de raio R corta ~L²/2R.
+- *Solução:* velocidade tangente à trilha (adiantada do atraso de 0,1 s) +
+  correção proporcional do erro lateral.
+
+**6. Bug: 40 de 40 rotas falhando depois da troca de controle.**
+- *Causa:* o laço que mede a curva à frente reaproveitava a variável `d` e
+  sobrescrevia a distância do centro do carro (0,14 → 0,6 m).
+- *Solução:* variável renomeada. 40/40 → depois 200/200.
+
+**7. Rotas de 148–164 m com 40 cruzamentos estourando o tempo.**
+- *Causa:* a exigência de "mesma aproximação, mesma manobra" fazia a volta à
+  largada dar várias voltas.
+- *Solução:* rota inteira limitada a 75 m (o regulamento não dá o tamanho).
+
+**8. Odometria errando 18 m numa rota de 40 m.**
+- *Causa:* patinação sorteada diferente em cada roda vira erro de rumo
+  constante.
+- *Solução:* patinação igual nas duas (é o mesmo piso); a assimetria vem da
+  tolerância de raio. Ainda erra ~1–2,5 m no fim da rota — esperado sem IMU e
+  sem calibrar o raio; o Vista não deve depender de odometria para posição.
+
+### Decisões
+
+- [ADR 003 — carro em rotação de roda](adr/003-carro-em-rotacao-de-roda.md)
+- [ADR 004 — cenários, placas e iluminação](adr/004-cenarios-placas-e-iluminacao.md)
+
+### Pendências abertas hoje
+
+- O firmware do ESP32 vai receber **rpm por roda** ou `(v, ω)`?
+- **IMU:** BNO085 (REV03) ou MPU6050 (CLAUDE.md)? Continua aberta.
+- Zona morta, constante de tempo e ganhos do PID são estimados — medir no carro.
+- Perguntas 8–12 em `docs/regulamento.md` (faixa de pedestre, cruzamento sem
+  placa, proibição ambígua, fim da prova, maquetes).

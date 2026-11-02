@@ -33,7 +33,7 @@ from typing import Any
 import numpy as np
 import yaml
 
-from ..geometry import rounded_rect
+from ..geometry import Polyline, resample, rounded_rect
 
 # --------------------------------------------------------------------------
 # Parâmetros
@@ -184,41 +184,74 @@ def build(reg: dict[str, Any] = REGULATION, inf: dict[str, Any] = INFERRED) -> d
                               "dash": [inf["dash_on"], inf["dash_off"]],
                               "points": _pl(np.array([[sx * cx_, ya], [sx * cx_, yb]]))})
 
-    # ---------------- faixas (verdade de campo) ----------------
-    # Mão DIREITA. No anel, sentido anti-horário → faixa EXTERNA.
-    lanes: list[dict[str, Any]] = [
-        {"id": "anel_antihorario", "closed": True, "width": ring / 2,
-         "points": _pl(rounded_rect(0, 0, hx - ring / 4, hy - ring / 4, max(rc - ring / 4, 0.1), 0.02))},
-        {"id": "anel_horario", "closed": True, "width": ring / 2,
-         "points": _pl(rounded_rect(0, 0, hx - 3 * ring / 4, hy - 3 * ring / 4, max(rc - 3 * ring / 4, 0.1), 0.02)[::-1])},
-    ]
+    # ---------------- malha viária ----------------
+    # Linha central de cada rua, de cruzamento a cruzamento. Toda rua é de mão
+    # dupla com 2 faixas (inferido); a faixa de cada sentido é a metade direita.
+    cy_ = my + st_ew / 2                                       # 1,1: vias leste-oeste
+    cx_ = mx + st_ns / 2                                       # 1,0: vias norte-sul
+    xc = (island_r + qx0) / 2                                  # 1,1: conector ao lado da ilha
+    rx, ry = hx - ring / 2, hy - ring / 2                      # 6,0 e 4,0: centro do anel
+    nodes = {
+        # T-junções no anel externo
+        "T_no": (-cx_, ry), "T_ne": (cx_, ry), "B_so": (-cx_, -ry), "B_se": (cx_, -ry),
+        "L_no": (-rx, cy_), "L_so": (-rx, -cy_), "R_ne": (rx, cy_), "R_se": (rx, -cy_),
+        # cruzamentos em volta da ilha central
+        "C_no": (-cx_, cy_), "C_ne": (cx_, cy_), "C_so": (-cx_, -cy_), "C_se": (cx_, -cy_),
+    }
+    roads: list[dict[str, Any]] = []
+    # Anel: corta a linha central fechada nos 8 cruzamentos, sentido anti-horário
+    ring_line = Polyline(resample(rounded_rect(0, 0, rx, ry, max(rc - ring / 2, 0.05), 0.01), 0.01, True), True)
+    ring_ids = ["R_ne", "T_ne", "T_no", "L_no", "L_so", "B_so", "B_se", "R_se"]
+    s_of = {k: ring_line.project(*nodes[k]).s for k in ring_ids}
+    ring_ids.sort(key=s_of.get)
+    for i, a in enumerate(ring_ids):
+        b = ring_ids[(i + 1) % len(ring_ids)]
+        s0, s1 = s_of[a], s_of[b]
+        if s1 <= s0:
+            s1 += ring_line.length
+        pts = [ring_line.point_at(s)[:2] for s in np.linspace(s0, s1, max(3, int((s1 - s0) / 0.02)))]
+        pts[0], pts[-1] = nodes[a], nodes[b]
+        roads.append({"id": f"anel_{a}_{b}", "a": a, "b": b, "width": ring, "points": _pl(np.asarray(pts))})
 
-    # ---------------- placas ----------------
-    # Slots: um por aproximação de cruzamento do anel (sentido anti-horário).
-    # Regra 3.5.2: 400 mm ANTES do cruzamento, à DIREITA, tangenciando a
-    # calçada. No anel externo a direita é a borda — a Figura 9 mostra a
-    # placa do lado de fora, como aqui.
-    d, sb = reg["sign_diameter"], reg["sign_bottom_height"]
-    off = reg["sign_before_crossing"]
-    out = d / 2 + 0.03
-    slots = [
-        # (nome, x, y, rumo do carro que se aproxima)
-        ("anel_topo_oeste", qx0 + off, hy + out, math.pi),
-        ("anel_esq_sul", -hx - out, qy0 + off, -math.pi / 2),
-        ("anel_base_leste", -qx0 - off, -hy - out, 0.0),
-        ("anel_dir_norte", hx + out, -qy0 - off, math.pi / 2),
-    ]
-    # Exemplo de classes — Figura 9 é "meramente ilustrativa"; no dia da
-    # prova a organização define. O simulador sorteia por cenário.
-    example = ["virar_esquerda", "virar_direita", "seguir_em_frente", "proibido_seguir_em_frente"]
-    signs = []
-    for (name, x, y, car_heading), cls in zip(slots, example, strict=True):
-        signs.append({
-            "slot": name, "class": cls,
-            "x": round(x, 4), "y": round(y, 4),
-            "facing_yaw": round(car_heading + math.pi, 6),   # a face aponta para o carro
-            "diameter": d, "bottom_height": sb,
-        })
+    def straight(rid: str, a: str, b: str, width: float, via: list | None = None) -> None:
+        pts = [nodes[a], *(via or []), nodes[b]]
+        roads.append({"id": rid, "a": a, "b": b, "width": width, "points": _pl(np.asarray(pts, float))})
+
+    # vias norte-sul (1,0 m) entre o anel e o centro
+    straight("ns_no", "T_no", "C_no", st_ns)
+    straight("ns_ne", "T_ne", "C_ne", st_ns)
+    straight("ns_so", "C_so", "B_so", st_ns)
+    straight("ns_se", "C_se", "B_se", st_ns)
+    # vias leste-oeste (0,8 m) entre o anel e o centro
+    straight("lo_no", "L_no", "C_no", st_ew)
+    straight("lo_ne", "C_ne", "R_ne", st_ew)
+    straight("lo_so", "L_so", "C_so", st_ew)
+    straight("lo_se", "C_se", "R_se", st_ew)
+    # em volta da ilha central: as vias passam pela folga de 80 cm (Figura 6)
+    gap = reg["island_gap"]
+    straight("centro_n", "C_no", "C_ne", gap)
+    straight("centro_s", "C_so", "C_se", gap)
+    # A via N-S (1,0 m) estreita para 0,8 m ao lado da ilha: a linha central
+    # desloca 10 cm. A dobra fica a 45° DENTRO do cruzamento — fora dele a
+    # faixa já é reta, e a conversão não ganha um "gancho".
+    dk = xc - cx_
+    straight("centro_o", "C_no", "C_so", gap, [(-xc, cy_ - dk), (-xc, -cy_ + dk)])
+    straight("centro_l", "C_ne", "C_se", gap, [(xc, cy_ - dk), (xc, -cy_ + dk)])
+
+    network = {
+        "nodes": [{"id": k, "x": round(v[0], 4), "y": round(v[1], 4)} for k, v in nodes.items()],
+        "roads": roads,
+    }
+
+    # Placas: a POSIÇÃO de cada uma sai da regra 3.5.2 aplicada à malha
+    # (vista_sim.roads.RoadNetwork.sign_pose). A CLASSE é definida por cenário
+    # (vista_sim.scenario), porque a rota só é revelada no dia da prova.
+    sign_spec = {
+        "diameter": reg["sign_diameter"],
+        "bottom_height": reg["sign_bottom_height"],
+        "before_crossing": reg["sign_before_crossing"],
+        "outward": 0.08,          # da beira da rua até o centro da placa — INFERIDO
+    }
 
     # ---------------- largada, semáforo, box ----------------
     start_line = inf["start_line_x"]
@@ -250,8 +283,8 @@ def build(reg: dict[str, Any] = REGULATION, inf: dict[str, Any] = INFERRED) -> d
         "bounds": {"x_min": -hx, "x_max": hx, "y_min": -hy, "y_max": hy},
         "obstacles": obstacles,
         "lines": lines,
-        "lanes": lanes,
-        "signs": signs,
+        "roads": network,
+        "sign_spec": sign_spec,
         "traffic_light": traffic_light,
         "start": start,
         "box": box,

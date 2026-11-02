@@ -122,3 +122,15 @@ Enviar a robocar.race@gmail.com **antes de 04/12**:
 5. As 6 placas da Figura 8 são a lista **fechada**?
 6. Raio dos cantos externos da pista (não cotado).
 7. Espessura das linhas pintadas (não cotada).
+8. Existem **faixas de pedestre** na pista? O regulamento não fala delas. O
+   Vista-Sim as sorteia (zebra 1:10 nas bocas de rua) só para o Vista não
+   confundir zebra com faixa — se existirem, pedir posição e medidas.
+9. **Cruzamento sem placa**: o carro segue em frente? (É o que a rota das
+   Figuras 9–11 sugere; adotamos como política em `vista_sim/rules.py`.)
+10. Uma placa de **proibição** pode deixar duas saídas possíveis (ex.:
+    "proibido virar à esquerda" num cruzamento de 4 vias)? Se puder, qual
+    saída vale?
+11. Como **termina** a prova da MASTER — volta ao ponto de largada? O "box" só
+    aparece descrito nas seções NANO/MICRO/MINI.
+12. Haverá **maquetes de prédios** nos quarteirões (3.4.1 permite)? Altura
+    máxima? Elas escondem placas e fazem sombra na pista.

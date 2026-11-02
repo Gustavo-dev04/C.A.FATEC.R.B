@@ -4,7 +4,8 @@ Carro autônomo em escala 1:10 para a **[RoboCar Race 2026](https://www.robocarr
 categoria **MASTER**. FATEC Santo André · Engenharia Mecatrônica.
 
 **Vista** é a IA do carro: lê a câmera, entende a pista (faixa, semáforo,
-placas), decide e manda `(v, ω)` para o ESP32.
+placas), decide e manda a **rotação de cada roda** para o ESP32 — o carro não
+tem direção, curva pela diferença entre as rodas.
 
 | | |
 |---|---|
@@ -24,16 +25,21 @@ placas), decide e manda `(v, ω)` para o ESP32.
 
 ## Vista-Sim
 
-![Uma volta no anel externo](docs/img/volta-anel-externo.jpg)
+![Rota pela cidade](docs/img/rota-cidade.jpg)
 
-Câmera fisheye virtual do carro, dirigida pelo piloto-oráculo, numa volta
-completa: largada no vermelho, saída só no verde, placas rotuladas
-automaticamente.
+Câmera fisheye virtual (esq.) e mapa visto de cima (dir.) numa rota sorteada:
+largada no vermelho, saída no verde, a rota é decidida **pelas placas**
+cruzamento a cruzamento, entrando no centro e contornando a ilha. Cada
+episódio sorteia rota, placas (as 6 classes, mais distratoras), faixas de
+pedestre, maquetes, público e **iluminação com sombras** — inclusive a do
+próprio carro.
+
+![Mesmo ponto, seis iluminações](docs/img/iluminacao.jpg)
 
 ```bash
 pip install -e ".[dev]"
 python -m vista_sim.maps.build_master        # (re)gera o mapa oficial
-python -m tools.sim_demo --out runs/demo     # uma volta + vídeo
+python -m tools.sim_demo --out runs/demo     # rota pela cidade + vídeo
 python -m tools.sim_demo --bench             # passos/s
 pytest
 ```
@@ -41,15 +47,22 @@ pytest
 ```python
 from vista_sim.env import VistaSimEnv
 
-env = VistaSimEnv(seed=0)
-obs, info = env.reset()
-obs, telemetria, verdade, fim, info = env.step(v=0.5, omega=0.0)
+env = VistaSimEnv()
+obs, info = env.reset(seed=139)             # sorteia o cenário inteiro
+obs, telemetria, verdade, fim, info = env.step(rpm_esq, rpm_dir)
+# atalho: env.step_vw(v, omega) converte para rpm de cada roda antes
 ```
 
-O Vista recebe `obs` (imagem) e `telemetria` (odometria **dos encoders**, como
-no ESP32 real). `verdade` — pose, `e_y`, `e_ψ`, placas visíveis com caixa,
-estado do semáforo — serve para medir o Vista e rotular dados, **nunca** como
-entrada dele.
+O Vista recebe `obs` (imagem) e `telemetria` (rpm **medido pelo encoder**,
+ticks e odometria integrada dos ticks, como no ESP32 real). `verdade` — pose,
+`e_y`/`e_ψ` do centro do carro, próximo cruzamento com placa e manobra, placas
+visíveis com caixa e fração visível, semáforo — serve para medir o Vista e
+rotular dados, **nunca** como entrada dele. `info["events"]` traz
+`placa_respeitada`, `desrespeitou_placa`, `saiu_da_pista`, `rota_completa`…
+
+O carro é simulado **roda por roda**: PID do ESP32 a 100 Hz, zona morta do
+motor, encoder quantizado, raios ligeiramente diferentes e patinação — rotação
+igual **não** é andar reto. Ver [ADR 003](docs/adr/003-carro-em-rotacao-de-roda.md).
 
 ### Fonte única de verdade
 
@@ -67,7 +80,8 @@ simulador muda junto.
 
 | Fase | Entrega | Estado |
 |---|---|---|
-| **S1** | car.yaml, mapa vetorial, cinemática, renderizador `fast` | ✅ volta completa; **1.092 passos/s** em 320×240 |
+| **S1** | car.yaml, mapa vetorial, cinemática, renderizador `fast` | ✅ oráculo completa **200/200** rotas sorteadas pela cidade |
+| S1.1 | rotação de roda, malha viária, placas pela regra, luz e sombra | ✅ ~1.000 passos/s só chão; ~200 com a cidade inteira |
 | S2 | Vista em loop fechado + cenários de regressão | ⬜ depende do Vista |
 | S3 | renderizador `photo` (Blender) + rótulos automáticos | ⬜ |
 | S4 | fidelidade sim × real + ultrassom/IMU | ⬜ depende do carro |
@@ -81,6 +95,8 @@ simulador muda junto.
 | [Diário de construção](docs/diario-de-construcao.md) | Todo o caminho, com problemas e números |
 | [ADR 001](docs/adr/001-mapa-pelo-regulamento.md) | Mapa pelo regulamento, não pelo `.obj` do organizador |
 | [ADR 002](docs/adr/002-camera-fisheye-e-chao-por-grade.md) | Câmera fisheye em NumPy e chão por grade |
+| [ADR 003](docs/adr/003-carro-em-rotacao-de-roda.md) | Carro comandado em rotação de roda; o centro do carro segue a faixa |
+| [ADR 004](docs/adr/004-cenarios-placas-e-iluminacao.md) | Cenários sorteados: rota, placas pela regra, luz com sombra |
 
 ## O que o regulamento diz e o simulador do organizador não
 

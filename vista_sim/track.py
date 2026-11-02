@@ -7,14 +7,14 @@ compartilhada entre todos os ambientes paralelos — só leitura.
 from __future__ import annotations
 
 import math
-from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 import numpy as np
 import yaml
 
-from .geometry import Polyline, point_in_polygon
+from .geometry import point_in_polygon
+from .roads import RoadNetwork
 
 # Cores em BGR (OpenCV). O renderizador de dataset (Blender) é que se
 # preocupa com fotorrealismo; aqui basta o contraste certo.
@@ -26,13 +26,7 @@ COLORS = {
     "canteiro": (52, 96, 64),       # verde nas figuras
     "ilha": (200, 200, 205),
 }
-
-
-@dataclass
-class Lane:
-    id: str
-    line: Polyline
-    width: float
+MASK_RES = 0.01                     # m/px da máscara "está na rua?"
 
 
 class Track:
@@ -43,15 +37,28 @@ class Track:
         self.y_min, self.y_max = b["y_min"] - margin, b["y_max"] + margin
         self.track_bounds = b
         self.res = resolution
-        self.lanes = {
-            ln["id"]: Lane(ln["id"], Polyline(np.asarray(ln["points"]), ln["closed"]), ln["width"])
-            for ln in data["lanes"]
-        }
+        self.network = RoadNetwork(data["roads"])
         self.obstacles = [(o["kind"], np.asarray(o["polygon"], dtype=np.float64)) for o in data["obstacles"]]
-        self.signs = data.get("signs", [])
+        self.signs: list[dict[str, Any]] = []          # definidas pelo cenário
         self.traffic_light = data.get("traffic_light")
         self.start = data["start"]
         self._texture: np.ndarray | None = None
+        self._mask: np.ndarray | None = None
+
+    def texture_with(self, crosswalks: list[np.ndarray]) -> np.ndarray:
+        """Textura do chão com as faixas de pedestre do cenário por cima.
+
+        Copia a textura base (já rasterizada) em vez de refazer o mapa: troca de
+        cenário em ~0,1 s em vez de ~1,5 s.
+        """
+        import cv2
+
+        img = self.texture.copy()
+        shift = 4
+        pts = [np.round(self.to_px(p) * (1 << shift)).astype(np.int32) for p in crosswalks]
+        if pts:
+            cv2.fillPoly(img, pts, COLORS["linha"], cv2.LINE_AA, shift)
+        return img
 
     @classmethod
     def load(cls, path: Path | str, **kw: Any) -> Track:
@@ -113,13 +120,50 @@ class Track:
     # ---------------- consultas ----------------
 
     def on_carpet(self, xy: np.ndarray) -> np.ndarray:
-        """True onde o ponto está na rua (dentro da borda, fora de obstáculos)."""
+        """True onde o ponto está na rua (dentro da borda, fora de obstáculos).
+
+        Consulta numa máscara de 1 cm/px (rasterizada uma vez): o carro checa
+        o CONTORNO inteiro a cada quadro — é assim que se pega a quina do
+        quarteirão entrando pela lateral numa conversão à direita.
+        """
+        xy = np.atleast_2d(np.asarray(xy, dtype=np.float64))
+        m = self.carpet_mask
+        u = np.rint((xy[:, 0] - self.x_min) / MASK_RES).astype(np.int64)     # centro do pixel
+        v = np.rint((self.y_max - xy[:, 1]) / MASK_RES).astype(np.int64)
+        ok = (u >= 0) & (v >= 0) & (u < m.shape[1]) & (v < m.shape[0])
+        out = np.zeros(len(xy), dtype=bool)
+        out[ok] = m[v[ok], u[ok]]
+        return out
+
+    def on_carpet_exact(self, xy: np.ndarray) -> np.ndarray:
+        """Versão por polígonos (lenta) — referência para os testes."""
         xy = np.atleast_2d(xy)
-        b = self.track_bounds
-        inside = (xy[:, 0] > b["x_min"]) & (xy[:, 0] < b["x_max"]) & (xy[:, 1] > b["y_min"]) & (xy[:, 1] < b["y_max"])
+        border = np.asarray(next(ln for ln in self.data["lines"] if ln["kind"] == "borda")["points"])
+        inside = point_in_polygon(xy[:, 0], xy[:, 1], border)
         for _, poly in self.obstacles:
             inside &= ~point_in_polygon(xy[:, 0], xy[:, 1], poly)
         return inside
+
+    @property
+    def carpet_mask(self) -> np.ndarray:
+        if self._mask is None:
+            import cv2
+
+            W = int(math.ceil((self.x_max - self.x_min) / MASK_RES))
+            H = int(math.ceil((self.y_max - self.y_min) / MASK_RES))
+            m = np.zeros((H, W), np.uint8)
+
+            def px(pts: np.ndarray) -> np.ndarray:
+                p = np.asarray(pts, dtype=np.float64)
+                return np.round(np.column_stack([(p[:, 0] - self.x_min) / MASK_RES,
+                                                 (self.y_max - p[:, 1]) / MASK_RES]) * 16).astype(np.int32)
+
+            border = next(ln for ln in self.data["lines"] if ln["kind"] == "borda")
+            cv2.fillPoly(m, [px(border["points"])], 1, cv2.LINE_8, 4)
+            for _, poly in self.obstacles:
+                cv2.fillPoly(m, [px(poly)], 0, cv2.LINE_8, 4)
+            self._mask = m.astype(bool)
+        return self._mask
 
 
 def _dash(pts: np.ndarray, closed: bool, on: float, off: float) -> list[np.ndarray]:

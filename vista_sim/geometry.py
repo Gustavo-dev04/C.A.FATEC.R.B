@@ -122,19 +122,31 @@ class Polyline:
         prv = np.roll(k, 1) if self.closed else np.insert(k[:-1], 0, k[0])
         return 0.5 * (k + prv) if n > 1 else k
 
-    def project(self, x: float, y: float) -> Projection:
-        """Projeta (x, y) no segmento mais próximo."""
+    def project(self, x: float, y: float, s_min: float | None = None, s_max: float | None = None) -> Projection:
+        """Projeta (x, y) no segmento mais próximo.
+
+        ``s_min``/``s_max`` restringem a busca a um trecho (só polilinha
+        aberta). Uma rota pela cidade passa pelo mesmo cruzamento mais de uma
+        vez; sem janela, a projeção pularia para a outra passagem.
+        """
         p = np.array([x, y])
-        ap = p - self._a
-        t = np.clip(np.einsum("ij,ij->i", ap, self._dir), 0.0, self._len)
-        foot = self._a + self._dir * t[:, None]
+        lo, hi = 0, len(self._a)
+        if not self.closed and (s_min is not None or s_max is not None):
+            if s_min is not None:
+                lo = max(0, int(np.searchsorted(self._s0, s_min, side="right")) - 1)
+            if s_max is not None:
+                hi = min(hi, max(lo + 1, int(np.searchsorted(self._s0, s_max, side="right"))))
+        a, dr, ln = self._a[lo:hi], self._dir[lo:hi], self._len[lo:hi]
+        t = np.clip(np.einsum("ij,ij->i", p - a, dr), 0.0, ln)
+        foot = a + dr * t[:, None]
         dist2 = np.sum((p - foot) ** 2, axis=1)
-        i = int(np.argmin(dist2))
+        j = int(np.argmin(dist2))
+        i = lo + j
         d = self._dir[i]
-        rel = p - foot[i]
+        rel = p - foot[j]
         e_y = float(d[0] * rel[1] - d[1] * rel[0])  # cruzado: + = à esquerda
         return Projection(
-            s=float(self._s0[i] + t[i]),
+            s=float(self._s0[i] + t[j]),
             e_y=e_y,
             heading=float(self._heading[i]),
             curvature=float(self._curv[i]),

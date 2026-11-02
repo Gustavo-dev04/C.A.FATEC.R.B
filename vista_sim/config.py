@@ -37,26 +37,53 @@ class CarParams:
     wheel_radius: float
     length: float
     width: float
+    height: float              # topo da pilha (para a sombra do próprio carro)
     front_overhang: float      # frente do carro a partir de base_link
     rear_overhang: float
     caster_x: float
+    # motor (por roda)
     rpm_no_load: float
-    time_constant: float
-    max_wheel_accel: float
+    motor_tau: float
+    deadband_duty: float
+    # encoder
     counts_per_rev: int
+    speed_window_s: float
+    # PID de velocidade por roda (ESP32)
+    pid_hz: float
+    kp: float
+    ki: float
+    kd: float
+    feedforward: bool
+    target_limit: float
+    # tolerâncias
+    radius_mismatch: float
+    wheel_slip: float
+    # limites
     v_max: float
     omega_max: float
-    accel_max: float
-    alpha_max: float
+
+    @property
+    def center_x(self) -> float:
+        """Centro do carro, à frente do eixo (m). É o ponto que segue a faixa:
+        com o eixo na faixa a frente (34 cm adiante) balança para fora nas
+        curvas; com a câmera, a traseira corta a quina. O centro passa em
+        todas as conversões da malha (varredura em tests/test_cenario.py)."""
+        return (self.front_overhang - self.rear_overhang) / 2.0
+
+    @property
+    def omega_wheel_max(self) -> float:
+        """Rotação livre da roda (rad/s)."""
+        return self.rpm_no_load / 60.0 * 2.0 * math.pi
 
     @property
     def wheel_speed_max(self) -> float:
         """Velocidade máxima da superfície da roda (m/s)."""
-        return self.rpm_no_load / 60.0 * 2.0 * math.pi * self.wheel_radius
+        return self.omega_wheel_max * self.wheel_radius
 
     @classmethod
     def from_yaml(cls, data: dict[str, Any]) -> CarParams:
         ch, dr, lim = data["chassis"], data["drive"], data["limits"]
+        mo, enc, pid, tol = dr["motor"], dr["encoder"], dr["pid"], dr.get("tolerances", {})
         # O desenho cota x da traseira; o eixo fica a 60 mm dela (folha M3).
         rear = 0.060
         return cls(
@@ -64,17 +91,26 @@ class CarParams:
             wheel_radius=dr["wheel_radius"],
             length=ch["overall_length"],
             width=ch["overall_width"],
+            # P02 (acrílico) a 135,5 mm + Jetson/suportes: ~0,17 m (estimativa)
+            height=float(ch.get("stack_height", 0.17)),
             front_overhang=ch["overall_length"] - rear,
             rear_overhang=rear,
             caster_x=dr["caster"]["x"],
-            rpm_no_load=dr["motor"]["rpm_no_load"],
-            time_constant=dr["motor"]["time_constant"],
-            max_wheel_accel=dr["motor"]["max_wheel_accel"],
-            counts_per_rev=int(dr["encoder"]["counts_per_rev"]),
+            rpm_no_load=float(mo["rpm_no_load"]),
+            motor_tau=float(mo["mechanical_time_constant"]),
+            deadband_duty=float(mo["deadband_duty"]),
+            counts_per_rev=int(enc["counts_per_rev"]),
+            speed_window_s=float(enc.get("speed_window_s", 0.02)),
+            pid_hz=float(pid["hz"]),
+            kp=float(pid["kp"]),
+            ki=float(pid["ki"]),
+            kd=float(pid.get("kd", 0.0)),
+            feedforward=bool(pid.get("feedforward", True)),
+            target_limit=float(pid.get("target_limit", 0.92)),
+            radius_mismatch=float(tol.get("wheel_radius_mismatch", 0.0)),
+            wheel_slip=float(tol.get("wheel_slip", 0.0)),
             v_max=lim["v_max"],
             omega_max=lim["omega_max"],
-            accel_max=lim["accel_max"],
-            alpha_max=lim["alpha_max"],
         )
 
 
