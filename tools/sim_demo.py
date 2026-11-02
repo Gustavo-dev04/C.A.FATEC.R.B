@@ -12,6 +12,8 @@ from __future__ import annotations
 import argparse
 import json
 import math
+import shutil
+import subprocess
 import time
 from pathlib import Path
 
@@ -23,6 +25,26 @@ from vista_sim.env import SimConfig, VistaSimEnv
 from vista_sim.oracle import OracleConfig, OraclePilot
 from vista_sim.render_fast import FastRenderer
 from vista_sim.track import Track
+
+
+def to_h264(path: Path) -> bool:
+    """Reconverte o vídeo para H.264, que navegadores e celulares tocam.
+
+    O OpenCV do pip só grava ``mp4v`` (MPEG-4 Part 2), que NÃO toca no
+    navegador. Com ffmpeg disponível, troca no lugar; sem ele, mantém o
+    original e avisa.
+    """
+    if shutil.which("ffmpeg") is None:
+        print(f"aviso: ffmpeg não encontrado; {path.name} ficou em mp4v (não toca no navegador)")
+        return False
+    tmp = path.with_suffix(".h264.mp4")
+    cmd = ["ffmpeg", "-y", "-v", "error", "-i", str(path), "-c:v", "libx264", "-preset", "slow",
+           "-crf", "26", "-pix_fmt", "yuv420p", "-movflags", "+faststart", "-an", str(tmp)]
+    if subprocess.run(cmd, check=False).returncode != 0:
+        tmp.unlink(missing_ok=True)
+        return False
+    tmp.replace(path)
+    return True
 
 
 def overlay(img: np.ndarray, truth, fps: float) -> np.ndarray:
@@ -91,6 +113,7 @@ def run_lap(out_dir: Path, seed: int, noise: float) -> dict:
             reason = "volta_completa"
             break
     video.release()
+    to_h264(out_dir / "volta.mp4")
 
     if sheet:
         # 12 quadros espalhados pela volta inteira, não só a largada
