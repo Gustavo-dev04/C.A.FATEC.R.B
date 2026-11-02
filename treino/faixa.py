@@ -257,7 +257,7 @@ def treinar(pasta: Path, saida: Path, epocas: int = 20, lote: int = 128, lr: flo
             scaler.step(otim)
             scaler.update()
             sched.step()
-            soma += float(perda) * len(x)
+            soma += float(perda.detach()) * len(x)
             n += len(x)
         m = avaliar(modelo, dl_va, device)
         m.update(epoca=ep, perda_treino=soma / max(n, 1), segundos=round(time.perf_counter() - t0, 1))
@@ -293,17 +293,27 @@ def exportar_onnx(modelo: RedeFaixa, tamanho: tuple[int, int], caminho: Path) ->
     h, w = tamanho
     img = torch.rand(1, 3, h, w)
     man = torch.tensor([[1.0, 0.0, 0.0]])
-    kw = dict(input_names=["imagem", "manobra"], output_names=["saida"], opset_version=17,
+    kw = dict(input_names=["imagem", "manobra"], output_names=["saida"],
               dynamic_axes={"imagem": {0: "n"}, "manobra": {0: "n"}, "saida": {0: "n"}})
-    try:                                      # torch ≥ 2.5: exportador clássico (TorchScript)
-        torch.onnx.export(exp, (img, man), str(caminho), dynamo=False, **kw)
-    except TypeError:                         # torch antigo: não conhece ``dynamo``
-        torch.onnx.export(exp, (img, man), str(caminho), **kw)
+    # Opset 17 pelo exportador CLÁSSICO: é o que qualquer TensorRT ≥ 8.6
+    # (JetPack 6.0 em diante) lê. O exportador novo (torch.export) só gera
+    # opset ≥ 18 — fica de reserva para quando o clássico sumir do PyTorch.
+    import warnings
+
+    try:
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", DeprecationWarning)
+            torch.onnx.export(exp, (img, man), str(caminho), dynamo=False, opset_version=17, **kw)
+        opset = 17
+    except Exception:  # noqa: BLE001 — clássico removido/quebrado: tenta o novo
+        torch.onnx.export(exp, (img, man), str(caminho), dynamo=True, opset_version=18, **kw)
+        opset = 18
     meta = {
         "entrada": {"imagem": f"(N, 3, {h}, {w}) RGB float32 em [0, 1], redimensionada da câmera com INTER_AREA",
                     "manobra": f"(N, 3) one-hot na ordem {list(MANOBRAS)}"},
         "saida": ["e_y_m", "e_psi_rad", "kappa_1_m", "dist_cruzamento_m", "p_dentro_cruzamento"],
         "altura": h, "largura": w, "manobras": list(MANOBRAS), "dist_max": DIST_MAX, "kappa_janela_m": KAPPA_M,
+        "opset": opset,
     }
     caminho.with_suffix(".json").write_text(json.dumps(meta, indent=2, ensure_ascii=False), encoding="utf-8")
     dif = None
@@ -318,7 +328,7 @@ def exportar_onnx(modelo: RedeFaixa, tamanho: tuple[int, int], caminho: Path) ->
         dif = float(np.abs(ref - got).max())
     except ImportError:
         pass
-    return {"onnx": str(caminho), "meta": str(caminho.with_suffix(".json")), "dif_max_torch_onnx": dif}
+    return {"onnx": str(caminho), "meta": str(caminho.with_suffix(".json")), "opset": opset, "dif_max_torch_onnx": dif}
 
 
 class PreditorTorch:
