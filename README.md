@@ -3,9 +3,12 @@
 Carro autônomo em escala 1:10 para a **[RoboCar Race 2026](https://www.robocarrace.com.br/)**,
 categoria **MASTER**. FATEC Santo André · Engenharia Mecatrônica.
 
-**Vista** é a IA do carro: lê a câmera, entende a pista (faixa, semáforo,
-placas), decide e manda a **rotação de cada roda** para o ESP32 — o carro não
-tem direção, curva pela diferença entre as rodas.
+**Vista** é a IA do carro: lê a câmera, entende a pista (faixa, cruzamento,
+semáforo, placas), decide e manda a **rotação de cada roda** para o ESP32 — o
+carro não tem direção, curva pela diferença entre as rodas.
+
+> 📌 **Comece pela [visão geral do projeto](docs/VISAO-GERAL.md)**: o que
+> existe, os resultados, o problema em aberto e o plano até a prova.
 
 | | |
 |---|---|
@@ -23,6 +26,25 @@ tem direção, curva pela diferença entre as rodas.
    esta prova.
 2. **Quando o carro estiver pronto — dados reais** da pista caseira até a
    competição.
+
+## Estado (07/11/2026)
+
+| Etapa | Estado |
+|---|---|
+| Mapa oficial lido nas figuras do regulamento | ✅ |
+| Simulador: carro em rotação de roda, câmera fisheye, cidade, placas, luz, MPU6050 | ✅ oráculo completa **200/200** rotas sorteadas |
+| Controle a partir da percepção + filtro com encoders e giroscópio | ✅ **40/40** rotas com a verdade |
+| Pipeline de treino + notebook do Colab | ✅ |
+| Detector de placas e semáforo (YOLO11n) | ✅ mAP50 **0,948**; semáforo **0,99** (no simulador) |
+| Rede de faixa (ResNet18) | ⚠️ erra ~0,3 cm por imagem, mas dirigindo completa **4/10** rotas — perde-se **dentro do cruzamento** |
+| DAgger (a rede dirige, o oráculo socorre) | ✅ implementado; num teste local não resolveu o cruzamento |
+| Cruzamento por odometria + localização no mapa | 💬 proposto, aguardando ok |
+| Detector no laço (placa detectada → manobra) | ⬜ |
+| Firmware do ESP32, integração na Jetson, calibração no carro | ⬜ |
+| Dados reais da pista caseira | ⬜ depende do carro |
+
+Detalhes e números em [docs/VISAO-GERAL.md](docs/VISAO-GERAL.md); cada passo,
+com problemas e soluções, no [diário de construção](docs/diario-de-construcao.md).
 
 ## Vista-Sim
 
@@ -42,7 +64,7 @@ pip install -e ".[dev]"
 python -m vista_sim.maps.build_master        # (re)gera o mapa oficial
 python -m tools.sim_demo --out runs/demo     # rota pela cidade + vídeo
 python -m tools.sim_demo --bench             # passos/s
-pytest
+pytest                                        # 89 testes
 ```
 
 ```python
@@ -66,51 +88,63 @@ O carro é simulado **roda por roda**: PID do ESP32 a 100 Hz, zona morta do
 motor, encoder quantizado, raios ligeiramente diferentes e patinação — rotação
 igual **não** é andar reto. Ver [ADR 003](docs/adr/003-carro-em-rotacao-de-roda.md).
 
-### Treino (Colab)
+## Treino (Colab)
 
 [`notebooks/treino_vista.ipynb`](notebooks/treino_vista.ipynb) — abra no Colab
-com GPU e `Executar tudo`: gera os dados no simulador, ajusta uma ResNet18
-(faixa) e um YOLO11n (placas e semáforo) pré-treinados, exporta ONNX, mede a
-rede **dirigindo no simulador** e faz rodadas de **DAgger** (a rede dirige, o
-oráculo socorre, essas situações viram treino). Os modelos vão para o Drive.
-Ver [ADR 006](docs/adr/006-treino-com-dados-do-simulador.md) e
+com GPU e `Executar tudo`:
+
+1. gera os dados no simulador;
+2. ajusta uma ResNet18 (faixa) e um YOLO11n (placas e semáforo) pré-treinados;
+3. exporta ONNX;
+4. mede a rede **dirigindo no simulador**, com e sem o filtro;
+5. faz rodadas de **DAgger**.
+
+`CONTINUAR_DE` retoma de um modelo já salvo no Drive. Ver
+[ADR 006](docs/adr/006-treino-com-dados-do-simulador.md) e
 [ADR 007](docs/adr/007-dagger-e-filtro.md).
 
 ```bash
 pip install -e ".[treino]"
 python -m tools.gerar_dataset --out dataset --episodios 150          # só CPU
-python -m tools.avaliar_modelo --onnx modelos/faixa.onnx --sementes 100000:100010
+python -m tools.gerar_dataset --out dataset --episodios 40 \
+    --semente-inicial 501000 --piloto-onnx faixa.onnx                # DAgger
+python -m tools.avaliar_modelo --onnx faixa.onnx --sementes 100000:100010
 ```
 
-### Fonte única de verdade
+O treino roda no PC ou no Colab — **nunca na Jetson**. Lá só roda o TensorRT.
+
+## Fonte única de verdade
 
 O simulador lê os mesmos arquivos do carro real. Calibrou a câmera → o
 simulador muda junto.
 
 | Arquivo | Conteúdo | Origem |
 |---|---|---|
-| `config/car.yaml` | geometria, motor, encoder, sensores | desenho REV03 |
+| `config/car.yaml` | geometria, motor, encoder, PID, MPU6050, ultrassom, bateria | desenho REV03 + datasheets; ⚠️ motor/PID/encoder estimados |
 | `config/camera/intrinsics.yaml` | modelo fisheye | ⚠️ estimado — calibrar |
 | `config/camera/extrinsics.yaml` | pose da câmera, pitch | REV03 — medir |
 | `maps/robocar_master.yaml` | mapa oficial | gerado do regulamento |
 
-### Estado (fases do CLAUDE.md §5A)
+## Onde está cada coisa
 
-| Fase | Entrega | Estado |
-|---|---|---|
-| **S1** | car.yaml, mapa vetorial, cinemática, renderizador `fast` | ✅ oráculo completa **200/200** rotas sorteadas pela cidade |
-| S1.1 | rotação de roda, malha viária, placas pela regra, luz e sombra | ✅ ~1.000 passos/s só chão; ~200 com a cidade inteira |
-| S2 | Vista em loop fechado + cenários de regressão | ⬜ depende do Vista |
-| S3 | renderizador `photo` (Blender) + rótulos automáticos | ⬜ |
-| S4 | fidelidade sim × real + ultrassom/IMU | ⬜ depende do carro |
+| Caminho | O quê |
+|---|---|
+| `vista_sim/` | simulador **e** a lógica que vai para o carro: `rules.py` (placa → manobra), `controle.py` (filtro + controle), `imu.py` (odometria) |
+| `treino/` | rede de faixa, dataset do detector, avaliação dirigindo |
+| `tools/` | `sim_demo.py` (vídeo), `gerar_dataset.py` (dados e DAgger), `avaliar_modelo.py` (ONNX dirigindo) |
+| `notebooks/` | notebook do Colab |
+| `tests/` | 89 testes |
+| `docs/` | visão geral, regulamento lido, análise de FOV, ADRs, diário, resumos |
 
 ## Documentação
 
 | Documento | Sobre |
 |---|---|
-| [Regulamento](docs/regulamento.md) | O que as regras exigem — **inclui o lido nas figuras** |
+| [**Visão geral**](docs/VISAO-GERAL.md) | Estado do projeto, resultados, plano até a prova |
+| [Regulamento](docs/regulamento.md) | O que as regras exigem — **inclui o lido nas figuras** — e as perguntas para a organização |
 | [Análise de FOV](docs/fov-analise.md) | Por que o semáforo não restringe o pitch |
 | [Diário de construção](docs/diario-de-construcao.md) | Todo o caminho, com problemas e números |
+| [Resumo de 02/11](docs/resumo-2026-11-02.md) | O dia em que o simulador e o treino nasceram |
 | [ADR 001](docs/adr/001-mapa-pelo-regulamento.md) | Mapa pelo regulamento, não pelo `.obj` do organizador |
 | [ADR 002](docs/adr/002-camera-fisheye-e-chao-por-grade.md) | Câmera fisheye em NumPy e chão por grade |
 | [ADR 003](docs/adr/003-carro-em-rotacao-de-roda.md) | Carro comandado em rotação de roda; o centro do carro segue a faixa |

@@ -466,3 +466,39 @@ do Colab erra muito menos, mas as 5 falhas dele também foram ali.
    vem do mapa, posicionada pelo `e_y`/`e_ψ` da rede na faixa (onde ela erra
    0,3 cm), e é seguida por encoders + giroscópio (~1,5 m: erro de ~1 cm);
 3. na saída, a rede volta a mandar.
+
+---
+
+## 07/11/2026 — Atualização geral da documentação
+
+Pedido da equipe: deixar o repositório inteiro em dia com o que foi feito.
+
+### Feito
+
+- **`docs/VISAO-GERAL.md`** (novo): o documento para quem chega agora.
+  - objetivo e estratégia;
+  - o carro;
+  - a arquitetura do Vista, com o que vai para o carro e o que é só do simulador;
+  - o simulador e o treino;
+  - todos os resultados até aqui;
+  - o problema do cruzamento e a proposta;
+  - plano semana a semana até 04/12;
+  - decisões e perguntas em aberto.
+
+  O antigo `VISAO-GERAL.md` foi apagado em 02/11 junto com o código do carro
+  errado; este o substitui.
+- **README**: tabela de estado atualizada (detector, rede de faixa 4/10,
+  filtro, DAgger, proposta do cruzamento), seção de treino com DAgger e
+  `CONTINUAR_DE`, mapa do repositório, links para a visão geral e para o
+  resumo de 02/11.
+- **Resumo de 02/11**: pendências do Colab marcadas como feitas, com os
+  resultados do detector, da rede dirigindo, do filtro e do DAgger.
+- `.gitignore`: removida a referência a `data/README.md` (apagado em 02/11).
+
+### Estado
+
+- 89 testes.
+- Todo o trabalho continua no branch `claude/autonomous-car-repo-data-lzwn7t`;
+  o `main` só tem o commit inicial.
+- Em aberto: a proposta de atravessar o cruzamento por odometria + localização
+  no mapa (aguardando ok).

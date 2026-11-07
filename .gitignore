@@ -3,7 +3,7 @@
 # =============================================================
 
 # --- Dados brutos e datasets (pesados demais para o Git) ------
-# Ver data/README.md para a política de armazenamento.
+# Os datasets do simulador são reproduzíveis: semente + commit.
 data/sessions/
 data/datasets/
 data/raw/
