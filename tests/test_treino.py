@@ -191,14 +191,23 @@ def test_dagger_a_rede_dirige_e_o_oraculo_assume(dataset, tmp_path):
     pytest.importorskip("torch")
     pytest.importorskip("onnx")
     pytest.importorskip("onnxruntime")
+    import torch
+
     from tools.gerar_dataset import gerar
     from treino.faixa import RedeFaixa, exportar_onnx
 
+    # Rede ENVIESADA de propósito: diz sempre "5° torto para a esquerda" — o
+    # Vista corrige para a direita, deriva de verdade e o oráculo tem que assumir.
+    rede = RedeFaixa(pretrained=False)
+    ultima = rede.head[-1]
+    with torch.no_grad():
+        ultima.weight.zero_()
+        ultima.bias.copy_(torch.tensor([0.0, 0.436, 0.0, 3.0, -5.0]))  # e_ψ = 0,436 × 0,20 rad = 5°
     onnx = tmp_path / "faixa.onnx"
-    exportar_onnx(RedeFaixa(pretrained=False), (48, 64), onnx)   # rede SEM treino: erra muito
+    exportar_onnx(rede, (48, 64), onnx)
     out = tmp_path / "dag"
     meta = gerar(out, episodios=1, semente_inicial=500000, passo=3, workers=1, res=(160, 120),
-                 max_quadros=360, vistas_extras=0, piloto_onnx=onnx, log=lambda *_: None)
+                 max_quadros=420, vistas_extras=0, piloto_onnx=onnx, log=lambda *_: None)
     assert meta["dagger_desta_geracao"] == str(onnx)
     with open(out / "rotulos.csv", encoding="utf-8") as fh:
         pilotos = {r["piloto"] for r in csv.DictReader(fh)}

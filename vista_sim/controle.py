@@ -45,6 +45,12 @@ class ControleConfig:
     turn_k: float = 1.2        # |κ| acima disso = curva
     brake_dist: float = 0.6    # m antes de um cruzamento com conversão
     accel: float = 1.0         # m/s²
+    # A correção lateral (k·e_y) é limitada a esta fração da velocidade — no
+    # máximo ~20° de ângulo de aproximação. Sem isso, 5 cm de erro de uma vez
+    # (saindo de um cruzamento) viram 1,6 rad/s de giro: a frente do carro
+    # varre para o lado e sai do tapete.
+    max_aprox: float = 0.35
+    kv_max: float = 2.4        # ganho × velocidade ≤ isto (ver OracleConfig.kv_max)
 
 
 class PilotoFaixa:
@@ -71,8 +77,11 @@ class PilotoFaixa:
 
         phi = -p.e_psi
         th = phi + p.kappa * v * c.ff_time
-        ux = v * math.cos(th) + c.k_lat * p.e_y * math.sin(phi)
-        uy = v * math.sin(th) - c.k_lat * p.e_y * math.cos(phi)
+        lim = c.max_aprox * v                 # parado não corrige de lado (giraria no lugar)
+        k = min(c.k_lat, c.kv_max / max(v, 1e-3))
+        lat = float(np.clip(k * p.e_y, -lim, lim))
+        ux = v * math.cos(th) + lat * math.sin(phi)
+        uy = v * math.sin(th) - lat * math.cos(phi)
         omega = float(np.clip(uy / car.center_x, -car.omega_max, car.omega_max))
         return wheel_rpm(max(ux, 0.0), omega, car.track_width, car.wheel_radius)
 
@@ -113,12 +122,18 @@ class FiltroFaixa:
         self.e_y: float | None = None
         self.e_psi = 0.0
 
-    def atualizar(self, medida: Percepcao, v: float, omega: float, dt: float) -> Percepcao:
+    def atualizar(self, medida: Percepcao, v: float, omega: float, dt: float,
+                  kappa_atual: float | None = None) -> Percepcao:
+        """``kappa_atual``: curvatura da faixa ONDE o carro está (do mapa, se
+        houver). Sem ela, usa o κ da rede — que é a média dos próximos 40 cm e,
+        chegando numa conversão, já "vê" a curva: a previsão giraria antes da
+        hora e o rumo filtrado ficaria ~2° torto na entrada do cruzamento."""
         c = self.cfg
+        k_prev = medida.kappa if kappa_atual is None else kappa_atual
         if self.e_y is None:
             self.e_y, self.e_psi = medida.e_y, medida.e_psi
         else:
-            ep = self.e_psi + (omega - medida.kappa * v) * dt
+            ep = self.e_psi + (omega - k_prev * v) * dt
             ey = self.e_y + (v * math.sin(self.e_psi) + omega * self.d * math.cos(self.e_psi)) * dt
             if abs(medida.e_y - ey) > c.reinicia_m:
                 ey, ep = medida.e_y, medida.e_psi

@@ -18,6 +18,10 @@ Além disso, por episódio:
 * **montagem da câmera**: pitch ±2°, roll e yaw ±1° (o pitch real ainda não foi
   medido; a rede não pode depender do valor exato);
 * **pós-processamento**: brilho, ruído, vinheta e desfoque de movimento;
+* **velocidade**: cruzeiro do oráculo sorteado em ``--velocidades`` (padrão
+  0,35–0,80 m/s) e conversão em 0,24–0,34 m/s — o Vista começa a 0,5 e vai
+  subir; a rede precisa ter visto o carro (e os desvios dele) em várias
+  velocidades;
 * **vistas deslocadas**: para cada quadro salvo, o mesmo instante renderizado
   com o carro até ±15 cm para o lado e ±15° torto, com os rótulos recalculados.
   Cobre o "carro fora do centro" sem precisar dirigir torto (coluna ``vista``).
@@ -25,11 +29,14 @@ Além disso, por episódio:
 Salva 1 quadro a cada ``--passo`` (quadros vizinhos a 30 Hz são quase iguais);
 os outros nem são renderizados.
 
-**DAgger** (``--piloto-onnx faixa.onnx``): a REDE dirige (com o filtro de
-odometria + giroscópio) e o oráculo só assume quando ela passa de
-``--assume-m`` de erro lateral ou 25° de rumo, devolvendo quando o carro
-estabiliza. Assim entram no treino as situações a que a rede SE leva — e que o
-oráculo dirigindo sozinho nunca visitaria. Coluna ``piloto``: quem dirigia.
+**DAgger** (``--piloto-onnx faixa.onnx``): o VISTA dirige (``vista.piloto``:
+rede de faixa + filtro na faixa, curva do mapa por odometria no cruzamento;
+placas pelo detector perfeito, para o foco ser a rede de faixa) e o oráculo só
+assume quando o carro passa de ``--assume-m`` de erro lateral (3,5 cm do lado do
+meio-fio) ou 25° de rumo,
+devolvendo quando ele estabiliza. Assim entram no treino as situações a que o
+Vista SE leva — e que o oráculo dirigindo sozinho nunca visitaria. Coluna
+``piloto``: quem dirigia.
 """
 
 from __future__ import annotations
@@ -70,6 +77,8 @@ def episodio(args: dict) -> dict:
     seed, out, passo = args["seed"], Path(args["out"]), args["passo"]
     rng = np.random.default_rng(seed + 7919)   # sorteios da GERAÇÃO (o cenário usa ``seed``)
     base = load_camera(repo_root())
+    if args.get("pitch_graus") is not None:
+        base = base.with_pitch(args["pitch_graus"])      # experimento: outra montagem da câmera
     if args.get("res"):
         base = base.scaled(*args["res"])
     j = args["jitter_deg"]
@@ -85,20 +94,32 @@ def episodio(args: dict) -> dict:
     env = VistaSimEnv(track=_TRACK, camera=cam, config=SimConfig(randomize_fx=True), seed=seed)
     obs, info = env.reset(seed=seed)
     env.renderer.fx.motion_blur_px = int(rng.choice([0, 0, 0, 2, 3]))
+    vel = args.get("velocidades")
+    v_cruz = float(rng.uniform(*vel)) if vel else 0.50
+    v_curva = float(rng.uniform(0.24, min(0.34, v_cruz))) if vel else 0.28
     pilot = OraclePilot(env.track.network, info["scenario"].signs, env.car_params,
-                        OracleConfig(noise=noise), rng=np.random.default_rng(seed + 31))
+                        OracleConfig(noise=noise, v_cruise=v_cruz, v_turn=v_curva),
+                        rng=np.random.default_rng(seed + 31))
     tr, tel = info["truth"], info["telemetry"]
     pilot.reset(tr.x, tr.y, tr.yaw)
     rede = None
     if dagger:
-        from treino.avaliacao import PilotoRede, PreditorOnnx
+        from treino.avaliacao import PreditorOnnx
+        from vista.piloto import VistaConfig, VistaPiloto
+        from vista.placas import DetectorVerdade
 
         caminho = args["piloto_onnx"]
         if caminho not in _REDES:
             _REDES[caminho] = PreditorOnnx(caminho, threads=1)
-        rede = PilotoRede(_REDES[caminho], env.car_params, filtro=True)  # type: ignore[arg-type]
+        det_v = DetectorVerdade()
+        rede = VistaPiloto(env.track, env.car_params, env.cam_params, _REDES[caminho], det_v,  # type: ignore[arg-type]
+                           VistaConfig(v_cruzeiro=v_cruz, v_curva=v_curva))
+        rede.reset()
     controle, t_ok = ("rede" if dagger else "oraculo"), 0.0
     assume_m, assume_psi = args.get("assume_m", 0.06), math.radians(args.get("assume_graus", 25.0))
+    # À direita fica o meio-fio: na via de 80 cm sobram 8 cm entre o carro
+    # centrado e a borda (mesmo limite do ruído do oráculo). Assume antes.
+    assume_dir = min(assume_m, OracleConfig().noise_max_right)
 
     ep_dir = out / f"ep_{seed:06d}"
     ep_dir.mkdir(parents=True, exist_ok=True)
@@ -131,23 +152,24 @@ def episodio(args: dict) -> dict:
             # DAgger: a rede dirige; o oráculo assume quando ela se afasta e
             # devolve quando o carro estabiliza. As imagens dessas situações
             # — que o oráculo sozinho nunca visitaria — ganham rótulo exato.
-            if controle == "rede" and (abs(tr.e_y) > assume_m or abs(tr.e_psi) > assume_psi):
+            if controle == "rede" and (tr.e_y > assume_m or tr.e_y < -assume_dir or abs(tr.e_psi) > assume_psi):
                 controle, t_ok = "oraculo", 0.0
             elif controle == "oraculo":
                 ok = abs(tr.e_y) < 0.02 and abs(tr.e_psi) < math.radians(6)
                 t_ok = t_ok + 1 / 30 if ok else 0.0
                 if t_ok >= 0.5:
                     controle = "rede"
-            nj = tr.next_junction
-            cmd_rede, _ = rede.act(obs, tel, nj["maneuver"] if nj else "frente", go)
+            det_v.objetos = tr.objects
+            cmd_rede = rede.act(obs, tel)          # roda sempre: mantém mapa e estado em dia
             if controle == "rede":
                 cmd = cmd_rede
         k += 1
         render = (k % passo == 0) or rede is not None    # a rede precisa ver todo quadro
         # Depois da largada o semáforo real fica verde para sempre; para o
         # detector ver os 3 estados de vários ângulos, o DESENHO é sorteado
-        # (o rótulo segue o desenho; o carro obedece ao real).
-        if go and env.t >= tl_troca:
+        # (o rótulo segue o desenho; o carro obedece ao real). No DAgger não:
+        # o Vista larga pelo semáforo que VÊ.
+        if go and env.t >= tl_troca and not dagger:
             env.tl_override = str(rng.choice(["vermelho", "amarelo", "verde"]))
             tl_troca = env.t + float(rng.uniform(1.0, 3.0))
         obs, tel, tr, done, inf = env.step(*cmd, render=render)
@@ -182,7 +204,8 @@ def episodio(args: dict) -> dict:
         for o in objs:
             fh.write(json.dumps(o, ensure_ascii=False) + "\n")
     return {"seed": seed, "motivo": reason, "imagens": len(rows), "rota_m": round(env.route.length, 1),
-            "ruido": noise, "frac_rede": round(sum(r["piloto"] == "rede" for r in rows) / max(len(rows), 1), 3)}
+            "ruido": noise, "v_cruzeiro": round(v_cruz, 3),
+            "frac_rede": round(sum(r["piloto"] == "rede" for r in rows) / max(len(rows), 1), 3)}
 
 
 def juntar(out: Path) -> tuple[list[int], int]:
@@ -220,7 +243,9 @@ def gerar(out: Path, episodios: int, semente_inicial: int = 0, passo: int = 4, w
           res: tuple[int, int] | None = None, ruido_prob: float = 0.6, ruido_max: float = 0.04,
           jitter_deg: float = 2.0, qualidade: int = 92, max_quadros: int | None = None,
           vistas_extras: int = 1, desloc_m: float = 0.15, desloc_graus: float = 15.0,
-          piloto_onnx: Path | str | None = None, assume_m: float = 0.06, log=print) -> dict:
+          piloto_onnx: Path | str | None = None, assume_m: float = 0.06,
+          velocidades: tuple[float, float] | None = (0.35, 0.80), pitch_graus: float | None = None,
+          log=print) -> dict:
     from multiprocessing import get_context
 
     out.mkdir(parents=True, exist_ok=True)
@@ -229,7 +254,7 @@ def gerar(out: Path, episodios: int, semente_inicial: int = 0, passo: int = 4, w
              "ruido_max": ruido_max, "jitter_deg": jitter_deg, "qualidade": qualidade,
              "max_quadros": max_quadros, "vistas_extras": vistas_extras, "desloc_m": desloc_m,
              "desloc_graus": desloc_graus, "piloto_onnx": str(piloto_onnx) if piloto_onnx else None,
-             "assume_m": assume_m}
+             "assume_m": assume_m, "velocidades": velocidades, "pitch_graus": pitch_graus}
             for s in range(semente_inicial, semente_inicial + episodios)]
     t0 = time.perf_counter()
     res_eps = []
@@ -250,6 +275,8 @@ def gerar(out: Path, episodios: int, semente_inicial: int = 0, passo: int = 4, w
         "ruido_prob": ruido_prob, "ruido_max": ruido_max, "jitter_deg": jitter_deg,
         "vistas_extras": vistas_extras, "desloc_m": desloc_m, "desloc_graus": desloc_graus,
         "dagger_desta_geracao": str(piloto_onnx) if piloto_onnx else None,
+        "velocidades": list(velocidades) if velocidades else None,
+        "pitch_graus": pitch_graus if pitch_graus is not None else round(math.degrees(cam.pitch), 2),
         "manobras": list(MANOBRAS), "classes_placa": list(SIGN_CLASSES),
         "classes_deteccao": list(CLASSES_DETECCAO), "dist_max": DIST_MAX, "kappa_janela_m": KAPPA_M,
         "commit": _git_commit(), "segundos": round(time.perf_counter() - t0, 1),
@@ -277,11 +304,17 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--piloto-onnx", default=None,
                     help="DAgger: a rede (ONNX) dirige e o oráculo assume quando ela se afasta")
     ap.add_argument("--assume-m", type=float, default=0.06, help="DAgger: |e_y| em que o oráculo assume")
+    ap.add_argument("--velocidades", default="0.35:0.80",
+                    help="faixa de velocidade de cruzeiro sorteada por episódio (m/s); 'fixa' = 0,5")
+    ap.add_argument("--pitch-graus", type=float, default=None,
+                    help="experimento: pitch da câmera (padrão: config/camera/extrinsics.yaml)")
     a = ap.parse_args(argv)
     res = tuple(int(v) for v in a.res.lower().split("x")) if a.res else None
+    vel = None if a.velocidades == "fixa" else tuple(float(v) for v in a.velocidades.split(":"))
     meta = gerar(Path(a.out), a.episodios, a.semente_inicial, a.passo, a.workers, res,  # type: ignore[arg-type]
                  a.ruido_prob, a.ruido_max, a.jitter_deg, a.qualidade, a.max_quadros,
-                 a.vistas_extras, a.desloc_m, a.desloc_graus, a.piloto_onnx, a.assume_m)
+                 a.vistas_extras, a.desloc_m, a.desloc_graus, a.piloto_onnx, a.assume_m, vel,  # type: ignore[arg-type]
+                 a.pitch_graus)
     print(json.dumps({k: v for k, v in meta.items() if k != "sementes"}, indent=2, ensure_ascii=False))
     return 0
 

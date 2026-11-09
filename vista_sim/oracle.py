@@ -41,6 +41,10 @@ from .rules import decide
 @dataclass
 class OracleConfig:
     k_lat: float = 4.0              # 1/s — ganho do erro lateral do centro do carro
+    # Ganho × velocidade ≤ isto: com 0,1 s de atraso de comando e o ponto
+    # controlado a 14 cm do eixo, k = 4 oscila e diverge a 0,8 m/s (40/40
+    # rotas fora); k·v ≤ 2,4 não muda nada até 0,6 m/s e dá k = 3 a 0,8 (20/20).
+    kv_max: float = 2.4
     ff_time: float = 0.12           # s — antecipa a curva (atraso de comando ~0,1 s)
     v_cruise: float = 0.50
     v_turn: float = 0.28
@@ -166,8 +170,9 @@ class OraclePilot:
         off = self._offset_cur
         fx -= off * math.sin(th)
         fy += off * math.cos(th)
-        ux = v * math.cos(th_ff) + c.k_lat * (fx - cx)
-        uy = v * math.sin(th_ff) + c.k_lat * (fy - cy)
+        k = min(c.k_lat, c.kv_max / max(v, 1e-3))
+        ux = v * math.cos(th_ff) + k * (fx - cx)
+        uy = v * math.sin(th_ff) + k * (fy - cy)
         # Ponto fora do eixo (linearização por realimentação):
         #   Ṗ = v·(cos ψ, sen ψ) + ω·d·(−sen ψ, cos ψ)  ⇒  resolve (v, ω) para Ṗ = u
         cs, sn = math.cos(yaw), math.sin(yaw)

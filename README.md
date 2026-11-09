@@ -27,20 +27,19 @@ carro não tem direção, curva pela diferença entre as rodas.
 2. **Quando o carro estiver pronto — dados reais** da pista caseira até a
    competição.
 
-## Estado (07/11/2026)
+## Estado (09/11/2026)
 
 | Etapa | Estado |
 |---|---|
 | Mapa oficial lido nas figuras do regulamento | ✅ |
 | Simulador: carro em rotação de roda, câmera fisheye, cidade, placas, luz, MPU6050 | ✅ oráculo completa **200/200** rotas sorteadas |
 | Controle a partir da percepção + filtro com encoders e giroscópio | ✅ **40/40** rotas com a verdade |
-| Pipeline de treino + notebook do Colab | ✅ |
+| Pipeline de treino + notebooks do Colab (v1 e **v2**) | ✅ |
 | Detector de placas e semáforo (YOLO11n) | ✅ mAP50 **0,948**; semáforo **0,99** (no simulador) |
-| Rede de faixa (ResNet18) | ⚠️ erra ~0,3 cm por imagem, mas dirigindo completa **4/10** rotas — perde-se **dentro do cruzamento** |
-| DAgger (a rede dirige, o oráculo socorre) | ✅ implementado; num teste local não resolveu o cruzamento |
-| Cruzamento por odometria + localização no mapa | 💬 proposto, aguardando ok |
-| Detector no laço (placa detectada → manobra) | ⬜ |
-| Firmware do ESP32, integração na Jetson, calibração no carro | ⬜ |
+| Rede de faixa (ResNet18) | ✅ erra ~0,3 cm por imagem; v1 dirigindo tudo: 4/10 (perdia-se no cruzamento) |
+| **Vista completo** (`vista/`): cruzamento pela curva do mapa com odometria, placa detectada → manobra, largada pelo semáforo detectado | ✅ teto **11/12** rotas (118/119 decisões); com ruído do tamanho do erro da rede **18/20** (v1 com o mesmo ruído: 14/20); teto a 0,8 m/s 7/8 |
+| Vista completo com a rede e o YOLO do Colab | ⏳ `notebooks/treino_vista_v2.ipynb` |
+| Firmware do ESP32, integração na Jetson, calibração no carro | ⬜ carro em montagem |
 | Dados reais da pista caseira | ⬜ depende do carro |
 
 Detalhes e números em [docs/VISAO-GERAL.md](docs/VISAO-GERAL.md); cada passo,
@@ -64,7 +63,7 @@ pip install -e ".[dev]"
 python -m vista_sim.maps.build_master        # (re)gera o mapa oficial
 python -m tools.sim_demo --out runs/demo     # rota pela cidade + vídeo
 python -m tools.sim_demo --bench             # passos/s
-pytest                                        # 89 testes
+pytest                                        # 99 testes
 ```
 
 ```python
@@ -88,10 +87,38 @@ O carro é simulado **roda por roda**: PID do ESP32 a 100 Hz, zona morta do
 motor, encoder quantizado, raios ligeiramente diferentes e patinação — rotação
 igual **não** é andar reto. Ver [ADR 003](docs/adr/003-carro-em-rotacao-de-roda.md).
 
+## Vista (o que vai para o carro)
+
+```python
+from vista.piloto import VistaPiloto
+from vista.placas import DetectorOnnx
+from treino.avaliacao import PreditorOnnx
+
+vista = VistaPiloto(track, car, camera, PreditorOnnx("faixa.onnx"), DetectorOnnx("placas.onnx"))
+vista.reset()                                    # pose de largada do mapa
+rpm_esq, rpm_dir = vista.act(imagem, telemetria) # a cada quadro
+```
+
+Aguarda o verde (detector) → **na faixa** a rede dirige (com o filtro) →
+**no cruzamento** segue a curva do mapa oficial com a pose da odometria
+(escala do giroscópio calibrada a cada curva) → volta para a rede na rua
+seguinte do grafo. Cada placa detectada vai para a aproximação do mapa que a
+explica; `rules.decide` escolhe a manobra. [ADR 008](docs/adr/008-vista-completo-mapa-odometria-detector.md).
+
+```bash
+python -m tools.avaliar_vista --sementes 100000:100020 --workers 8          # teto (rede e detector perfeitos)
+python -m tools.avaliar_vista --faixa faixa.onnx --detector placas.onnx     # o Vista de verdade
+```
+
 ## Treino (Colab)
 
-[`notebooks/treino_vista.ipynb`](notebooks/treino_vista.ipynb) — abra no Colab
-com GPU e `Executar tudo`:
+[`notebooks/treino_vista_v2.ipynb`](notebooks/treino_vista_v2.ipynb) — **o
+atual**: parte dos modelos de 02/11, mede o Vista completo (teto, com a rede,
+com rede + YOLO), ajusta a rede com dados em várias velocidades, faz DAgger
+com o Vista dirigindo e sobe a velocidade.
+
+[`notebooks/treino_vista.ipynb`](notebooks/treino_vista.ipynb) — o treino do
+zero (v1), com GPU e `Executar tudo`:
 
 1. gera os dados no simulador;
 2. ajusta uma ResNet18 (faixa) e um YOLO11n (placas e semáforo) pré-treinados;
@@ -100,12 +127,13 @@ com GPU e `Executar tudo`:
 5. faz rodadas de **DAgger**.
 
 `CONTINUAR_DE` retoma de um modelo já salvo no Drive. Ver
-[ADR 006](docs/adr/006-treino-com-dados-do-simulador.md) e
-[ADR 007](docs/adr/007-dagger-e-filtro.md).
+[ADR 006](docs/adr/006-treino-com-dados-do-simulador.md),
+[ADR 007](docs/adr/007-dagger-e-filtro.md) e
+[ADR 008](docs/adr/008-vista-completo-mapa-odometria-detector.md).
 
 ```bash
 pip install -e ".[treino]"
-python -m tools.gerar_dataset --out dataset --episodios 150          # só CPU
+python -m tools.gerar_dataset --out dataset --episodios 150          # só CPU; velocidade 0,35–0,80 sorteada
 python -m tools.gerar_dataset --out dataset --episodios 40 \
     --semente-inicial 501000 --piloto-onnx faixa.onnx                # DAgger
 python -m tools.avaliar_modelo --onnx faixa.onnx --sementes 100000:100010
@@ -129,11 +157,12 @@ simulador muda junto.
 
 | Caminho | O quê |
 |---|---|
-| `vista_sim/` | simulador **e** a lógica que vai para o carro: `rules.py` (placa → manobra), `controle.py` (filtro + controle), `imu.py` (odometria) |
+| `vista/` | **o Vista**: `piloto.py` (máquina de estados), `mapa.py` (localização no grafo), `cruzamento.py` (curva do mapa por odometria), `placas.py` (detector no laço) |
+| `vista_sim/` | simulador **e** a lógica compartilhada com o carro: `rules.py` (placa → manobra), `controle.py` (filtro + controle), `imu.py` (odometria) |
 | `treino/` | rede de faixa, dataset do detector, avaliação dirigindo |
-| `tools/` | `sim_demo.py` (vídeo), `gerar_dataset.py` (dados e DAgger), `avaliar_modelo.py` (ONNX dirigindo) |
-| `notebooks/` | notebook do Colab |
-| `tests/` | 89 testes |
+| `tools/` | `sim_demo.py` (vídeo), `gerar_dataset.py` (dados e DAgger), `avaliar_vista.py` (Vista completo), `avaliar_modelo.py` (v1) |
+| `notebooks/` | notebooks do Colab (v2 = o atual) |
+| `tests/` | 99 testes |
 | `docs/` | visão geral, regulamento lido, análise de FOV, ADRs, diário, resumos |
 
 ## Documentação
@@ -152,6 +181,7 @@ simulador muda junto.
 | [ADR 005](docs/adr/005-imu-mpu6050-e-odometria.md) | MPU6050 simulada; rumo pelo giroscópio, calibrado no vermelho |
 | [ADR 006](docs/adr/006-treino-com-dados-do-simulador.md) | Treino: redes pré-treinadas ajustadas com dados do simulador |
 | [ADR 007](docs/adr/007-dagger-e-filtro.md) | DAgger (a rede dirige, o oráculo socorre) e filtro com encoders + giroscópio |
+| [ADR 008](docs/adr/008-vista-completo-mapa-odometria-detector.md) | Vista completo: cruzamento pelo mapa com odometria, detector no laço, decisões da equipe de 09/11 |
 
 ## O que o regulamento diz e o simulador do organizador não
 
@@ -164,5 +194,8 @@ cotas):
   pitch: com 15° as três lentes cabem.
 - Vias norte-sul de **100 cm**, leste-oeste de **80 cm**; linha central
   **branca**.
+- Com a câmera a 15° para baixo, a placa sai da imagem a menos de ~0,8 m —
+  nas ruas curtas do centro ela só é vista de longe (tabela por pitch em
+  [regulamento.md](docs/regulamento.md)).
 
 Detalhes e perguntas para a organização em [docs/regulamento.md](docs/regulamento.md).

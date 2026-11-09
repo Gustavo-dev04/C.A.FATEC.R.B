@@ -23,7 +23,7 @@ dev = ["pytest>=7.4", "ruff>=0.5"]
 treino = ["torch>=2.3", "torchvision>=0.18", "onnx>=1.15", "onnxruntime>=1.17", "onnxscript>=0.1"]
 
 [tool.setuptools.packages.find]
-include = ["vista_sim*", "tools*", "treino*"]
+include = ["vista*", "vista_sim*", "tools*", "treino*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

@@ -547,3 +547,133 @@ parecido com o YOLO a 640 e não tem pós-processamento de caixas → deve ficar
 ~45 ms (não cabe) → detector a cada 2–3 quadros como padrão seguro. A
 variação (10 a 25 ms) pesa no controle; anotar o modo de energia (`nvpmodel`)
 na próxima medida — sem alterá-lo sem a equipe.
+
+---
+
+## 09/11/2026 (noite) — Vista completo: cruzamento pelo mapa, detector no laço
+
+### Decisões da equipe (perguntas e respostas)
+
+| Tema | Resposta |
+|---|---|
+| Cruzamento | **odometria + mapa** (proposta aceita) |
+| Placas | **Vista completo**: detector + regras no laço, só sensores do carro |
+| Velocidade | completar a **0,5 m/s** e depois subir; dados em várias velocidades |
+| Sem placa | **em frente** — política confirmada |
+| Carro | ainda em montagem |
+| Organização | as perguntas **não** serão enviadas |
+| Repositório | fica público |
+| `main` | abrir PR do branch |
+
+Registrado no ADR 008 e em `docs/regulamento.md`.
+
+### O que foi feito — pacote `vista/`
+
+- `mapa.py` — `LocalizadorGrafo`: rua atual pelo grafo (o Vista sabe a rua
+  seguinte porque ele mesmo decide a conversão); pose prevista pela
+  odometria e amarrada à faixa do mapa pela rede.
+- `cruzamento.py` — `ManobraOdometria`: `fim da faixa → net.movement → começo
+  da faixa de saída`, seguido com a lei do oráculo e a pose da odometria.
+- `placas.py` — detector ONNX (letterbox e NMS próprios), detector perfeito
+  para testes, e o `LeitorPlacas`.
+- `piloto.py` — `VistaPiloto`: aguardando verde → faixa ↔ cruzamento.
+- `treino/avaliacao.py::rodar_vista` (+ `tools/avaliar_vista.py`): avalia em
+  paralelo, com cada parte trocável pela verdade (`FaixaVerdade`,
+  `FaixaRuidosa`, `DetectorVerdade`).
+
+### Problemas e soluções, na ordem
+
+1. **Script de avaliação travado** (>10 min para 4 rotas): `spawn` sem
+   `if __name__ == "__main__"` no script de teste → cada processo filho
+   reabria o pool. Só no script (o notebook não sofre disso).
+2. **Rumo 2° torto na entrada do cruzamento**, mesmo com a verdade: o
+   filtro prevê o rumo com `κ` da rede, que é a média dos **próximos 40 cm**
+   — chegando numa conversão ele já "vê" a curva e a previsão gira antes da
+   hora. Com ganho 0,12 o erro estacionário é ~2°. Solução: a previsão usa a
+   curvatura **do mapa onde o carro está** (`kappa_atual`). O v1 tinha o
+   mesmo viés.
+3. **Placa errada (distratora) atribuída à minha aproximação**: a janela em
+   volta do pixel previsto pegava a placa de outro cruzamento na mesma
+   direção, bem menor. Solução: janela vertical menor (a altura da placa é
+   conhecida), escolher a detecção **mais perto** do previsto e exigir
+   tamanho entre 0,6× e 1,7× do previsto.
+4. **Placa da rua curta nunca vista**: a placa do cruzamento seguinte aparece
+   **durante a curva** anterior, quando o leitor ainda olhava a aproximação
+   velha. E, pior, perto ela sai pelo topo da imagem: com a câmera a 15,6 cm
+   e 15° para baixo, o centro da placa (47,5 cm) só cabe a mais de ~0,8 m.
+   Nas ruas de ~1 m do centro, ela quase nunca aparece na própria aproximação.
+   Solução: o leitor atribui **cada** placa detectada à aproximação do mapa
+   que melhor a explica (todas, sempre), e os votos se acumulam desde longe.
+   Detector roda também dentro do cruzamento.
+   Medido sem render (24 rotas, 233 placas de rota, sem oclusão):
+
+   | Pitch | legível em algum momento | na própria aproximação | nunca |
+   |---|---|---|---|
+   | 15° | 98,7 % | 66,5 % | 1,3 % |
+   | 10° | 98,7 % | 73,8 % | 0,9 % |
+   | 7° | 99,1 % | 83,7 % | 0,9 % |
+   | 5° | 99,1 % | 85,0 % | 0,9 % |
+   | 0° | 99,1 % | 85,4 % | 0,0 % |
+
+   A análise de FOV de 02/11 dizia que o semáforo não restringe o pitch; as
+   placas restringem. Recomendação para a equipe: avaliar 5–7°.
+5. **Proibição ambígua virava "em frente"**: com "proibido seguir em frente"
+   lido num cruzamento de 4 vias, `decide` dá erro (duas saídas), e o código
+   caía para "sem placa = em frente" — justamente a proibida. Corrigido: se
+   houve placa lida, vai para a reserva provisória (frente → direita →
+   esquerda, a que ela não proíbe), registrada como `alternativa`.
+6. **Carro saiu da pista logo depois de um cruzamento (semente 100000)**:
+   na saída da curva a pose estava 5 cm e 2,6° errada — é a escala do
+   giroscópio (±3 % na MPU6050; 3 % de 90° = 2,7°). A rede, de volta,
+   mandou corrigir os 5 cm de uma vez: `k·e_y` = 0,23 m/s → 1,6 rad/s de
+   giro, a frente varreu para fora. Duas correções:
+   - **escala do giroscópio calibrada a cada curva**: giro contado ×
+     giro da pose amarrada à faixa antes e depois; mínimos quadrados com
+     prior fraco. Na 100000: 0,977 na primeira curva;
+   - **ângulo de aproximação limitado**: `k·e_y` ≤ 0,35·v (~20°), no
+     PilotoFaixa e na curva do mapa.
+
+### Resultados (simulador, 0,5 m/s)
+
+| Configuração | Rotas | Decisões certas |
+|---|---|---|
+| Teto do Vista (rede e detector perfeitos), 12 rotas | **11/12** | 118/119 |
+| Antes das correções 2–6 (8 rotas) | 3/8 → 6/8 | |
+| Rede local de teste + detector perfeito (8 rotas) | 0/8 | — a rede erra 6–9 cm na própria faixa; não mede nada |
+
+A única falha do teto: semente 100007, placa da rua curta vista só ~0,3 s,
+cortada no topo da imagem → sem placa → em frente → errado.
+7. **Teste do DAgger quebrou** (só "rede", o oráculo nunca assumia): (a) o
+   gerador sorteia o *desenho* do semáforo depois do verde, para o detector
+   ver os 3 estados — e o Vista, que agora larga pelo semáforo que vê, nunca
+   via dois verdes seguidos. No DAgger o sorteio fica desligado. (b) Com uma
+   rede enviesada de propósito, o carro saía do tapete antes de chegar a
+   6 cm: à direita sobram 8 cm até o meio-fio. O oráculo agora assume a
+   3,5 cm desse lado (como o limite do ruído dele). (c) O limite de
+   aproximação tinha piso de 0,1 m/s — parado, o carro girava no lugar
+   para corrigir; agora é proporcional a v.
+8. **Oráculo a 0,8 m/s: 0/40** (sai da pista oscilando, período ~0,5 s).
+   Com 0,1 s de atraso e o ponto controlado a 14 cm do eixo, k = 4 é demais
+   nessa velocidade. Testado: k = 3 → 20/20, 2,5 → 20/20, 2,0 → 20/20 (erro
+   maior). Regra: **k·v ≤ 2,4** — nada muda até 0,6 m/s; a 0,8 dá k = 3.
+   Oráculo: 40/40 a 0,5 (números idênticos aos de antes) e **40/40 a 0,8**.
+   Vale para o PilotoFaixa e a curva do mapa também.
+
+### Resultados finais do dia
+
+| Configuração | Rotas | Decisões certas |
+|---|---|---|
+| Teto do Vista, 12 rotas, 0,5 m/s | **11/12** | 118/119 |
+| Verdade + ruído da rede (0,8/2,5 cm, e_ψ 0,7/1,5°, κ 0,15, dist 3,6 cm), 20 rotas | **18/20** | 197/199 |
+| *v1 com o mesmo ruído + filtro, manobra da verdade (02/11)* | *14/20* | — |
+| Teto do Vista a 0,8 m/s, 8 rotas | **7/8** | 82/83 |
+| PilotoFaixa com a verdade (v1), 40 rotas — regressão | 40/40 | — |
+
+Todas as falhas: placa de rua curta nunca lida (100007 e 100013). Nenhuma de
+direção. 99 testes.
+
+Notebook novo: `notebooks/treino_vista_v2.ipynb` — parte dos modelos de
+02/11, mede teto / rede / rede + YOLO / v1 nas mesmas rotas, ajusta a rede
+com dados em 0,35–0,80 m/s, DAgger com o Vista dirigindo, varre a velocidade
+(0,5 → 0,8) e tem a opção `PITCH_GRAUS` para o experimento da câmera.
+

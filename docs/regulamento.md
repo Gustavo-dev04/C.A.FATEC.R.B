@@ -75,6 +75,22 @@ externa — porque ali a direita do carro é a borda, não um quarteirão.
 
 Vídeo oficial das placas: <https://youtu.be/YAg2p1kShZA>
 
+**Consequência para a câmera (medido no Vista-Sim, 09/11):** com a câmera a
+15,6 cm do chão e 15° para baixo (meio-FOV vertical ≈ 36°), o centro da placa
+(475 mm) sai pelo topo da imagem quando ela está a menos de ~0,8 m. Nas ruas
+curtas do centro (faixa de ~1 m) a placa do cruzamento seguinte quase nunca
+aparece na própria aproximação — só de longe. Por isso o Vista acumula as
+leituras de TODAS as placas que vê, cada uma atribuída à sua aproximação pelo
+mapa (ADR 008). Em 24 rotas (233 placas de rota, sem contar prédios na frente):
+
+| Pitch | Legível (≥ 4 leituras) em algum momento | … na própria aproximação | Nunca |
+|---|---|---|---|
+| 15° (atual) | 98,7 % | 66,5 % | 1,3 % |
+| 10° | 98,7 % | 73,8 % | 0,9 % |
+| 7° | 99,1 % | 83,7 % | 0,9 % |
+| 5° | 99,1 % | 85,0 % | 0,9 % |
+| 0° | 99,1 % | 85,4 % | 0,0 % |
+
 ## Semáforo (item 3.6 + figura)
 
 | Parâmetro | Valor |
@@ -112,7 +128,11 @@ O Vista-Sim usa o **regulamento**. Ver `docs/adr/001-mapa-pelo-regulamento.md`.
 
 ## Perguntas para a organização
 
-Enviar a robocar.race@gmail.com **antes de 04/12**:
+**Decisão da equipe (09/11): as perguntas NÃO serão enviadas.** Ficam aqui
+como registro do que o regulamento não responde; onde o Vista precisa de uma
+resposta, vale a política anotada (e a confirmação na pista, 04/12).
+
+Endereço, caso mudem de ideia: robocar.race@gmail.com.
 
 1. A penalidade por invasão/saída é **+10 s**? O texto diz "−10,0 segundos".
 2. As vias internas são de **mão dupla** (2 faixas de 40/50 cm)? A rota da
@@ -126,10 +146,14 @@ Enviar a robocar.race@gmail.com **antes de 04/12**:
    Vista-Sim as sorteia (zebra 1:10 nas bocas de rua) só para o Vista não
    confundir zebra com faixa — se existirem, pedir posição e medidas.
 9. **Cruzamento sem placa**: o carro segue em frente? (É o que a rota das
-   Figuras 9–11 sugere; adotamos como política em `vista_sim/rules.py`.)
+   Figuras 9–11 sugere.) → **Política confirmada pela equipe em 09/11**:
+   sem placa = em frente (`vista_sim/rules.py`).
 10. Uma placa de **proibição** pode deixar duas saídas possíveis (ex.:
     "proibido virar à esquerda" num cruzamento de 4 vias)? Se puder, qual
-    saída vale?
+    saída vale? → **Sem resposta.** O gerador de cenários nunca cria esse
+    caso; se o Vista ler uma, usa a **reserva provisória** frente → direita →
+    esquerda (a que a placa não proíbe) e registra `alternativa=True`
+    (`vista/placas.py`). A decidir pela equipe.
 11. Como **termina** a prova da MASTER — volta ao ponto de largada? O "box" só
     aparece descrito nas seções NANO/MICRO/MINI.
 12. Haverá **maquetes de prédios** nos quarteirões (3.4.1 permite)? Altura
