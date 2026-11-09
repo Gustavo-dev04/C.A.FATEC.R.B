@@ -1,0 +1,35 @@
+# =============================================================
+#  Intrínsecos da câmera — modelo FISHEYE (OpenCV)
+# =============================================================
+# ⚠️ PROVISÓRIO — NÃO É CALIBRAÇÃO.
+# Valores derivados do FOV nominal da lente, só para o Vista-Sim
+# rodar antes do tabuleiro. Quando `tools/calibrate.py` rodar com
+# cv2.fisheye.calibrate, este arquivo é sobrescrito e o simulador
+# inteiro muda junto (fonte única de verdade, CLAUDE.md §5A).
+
+calibrated: false
+source: "estimativa: equidistante, 120° na diagonal do sensor"
+
+sensor: "Sony IMX219"
+lens: "120° nominal, foco ajustável por rosca"
+
+# Resolução a que K se refere. O código reescala para outras.
+width: 1640
+height: 1232
+
+# Modelo equidistante: r = f·θ.
+#   f = (diagonal/2) / (60° em rad) = 1025,5 / 1,0472 ≈ 979
+#   → HFOV ≈ 95,9°   VFOV ≈ 72,1°   DFOV = 120°
+# Bate com o "≈ 92° H × 75° V" estimado no CLAUDE.md §3.4.
+fx: 979.4
+fy: 979.4
+cx: 820.0
+cy: 616.0
+
+# k1..k4 do cv2.fisheye. Zeros = equidistante ideal.
+dist: [0.0, 0.0, 0.0, 0.0]
+
+# Modo do sensor IMX219 em uso. 1640x1232 é binning 2x2 do array
+# inteiro: campo COMPLETO a 30 fps. 1920x1080 e 1280x720 são RECORTE
+# do sensor e perdem parte dos 120°.
+sensor_mode: {width: 1640, height: 1232, fps: 30}

@@ -1,0 +1,21 @@
+# Normaliza fim de linha para evitar ruído em diffs entre Windows/Linux.
+* text=auto eol=lf
+
+*.sh      text eol=lf
+*.py      text eol=lf
+*.cpp     text eol=lf
+*.h       text eol=lf
+*.md      text eol=lf
+*.yaml    text eol=lf
+*.yml     text eol=lf
+*.jsonl   text eol=lf
+
+# Binários - nunca aplicar conversão de EOL.
+*.png     binary
+*.jpg     binary
+*.jpeg    binary
+*.pdf     binary
+*.onnx    binary
+*.engine  binary
+*.pt      binary
+*.pth     binary

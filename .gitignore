@@ -1,0 +1,81 @@
+# =============================================================
+#  C.A.FATEC.R.B - arquivos que NUNCA devem entrar no Git
+# =============================================================
+
+# --- Dados brutos e datasets (pesados demais para o Git) ------
+# Os datasets do simulador são reproduzíveis: semente + commit.
+data/sessions/
+data/datasets/
+data/raw/
+data/interim/
+*.mp4
+*.avi
+*.mkv
+*.bag
+
+# --- Modelos treinados e artefatos de export ------------------
+models/
+checkpoints/
+runs/
+*.pt
+*.pth
+*.ckpt
+*.onnx
+*.engine
+*.trt
+*.plan
+
+# --- Python ---------------------------------------------------
+__pycache__/
+*.py[cod]
+*.so
+*.egg-info/
+.eggs/
+build/
+dist/
+.venv/
+venv/
+env/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+
+# --- PlatformIO / ESP32 ---------------------------------------
+.pio/
+.pioenvs/
+.piolibdeps/
+.clang_complete
+.gcc-flags.json
+firmware/esp32/test/host/test_protocol_host
+
+# --- Editores e sistema operacional ---------------------------
+.vscode/
+.idea/
+*.swp
+*~
+.DS_Store
+Thumbs.db
+
+# --- Logs e temporários ---------------------------------------
+logs/
+*.log
+tmp/
+*.tmp
+
+# --- Segredos (nunca commitar) --------------------------------
+.env
+*.pem
+*.key
+secrets.yaml
+
+# --- Vista-Sim --------------------------------------------------
+runs/
+*.mp4
+
+# datasets e modelos gerados pelo treino (reproduzíveis: semente + commit)
+dataset/
+dataset_*/
+yolo_*/
+modelos/

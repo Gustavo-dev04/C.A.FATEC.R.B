@@ -1,0 +1,144 @@
+# =============================================================
+#  C.A.FATEC.R.B — geometria e dinâmica do carro
+#  Fonte: desenho RC-2026-REV03 (20/10/2026), folhas M1/M2/M3
+# =============================================================
+# FONTE ÚNICA DE VERDADE. O Vista-Sim e o Vista real leem este
+# mesmo arquivo. Nunca duplicar um número daqui dentro do código.
+#
+# Referencial (igual ao desenho): base_link no chão, no meio do eixo
+# das rodas traseiras. x para a FRENTE, y para a ESQUERDA, z para CIMA.
+# Unidades: SI (m, rad, s, kg).
+#
+# O desenho cota x a partir da traseira da P01; o eixo das rodas fica
+# em x_desenho = 60 mm. Logo:  x_base_link = x_desenho − 0,060.
+
+meta:
+  drawing: "RC-2026-REV03"
+  drawing_date: "2026-10-20"
+  category: "MASTER"
+
+# --- chassi ---------------------------------------------------
+chassis:
+  # P01: compensado 6 mm, 400 × 180 (folha M3)
+  deck_length: 0.400
+  deck_width: 0.180
+  deck_thickness: 0.006
+  # Detalhe B: "o rodízio tem 65 de altura e a P01 fica a 66,5 do chão"
+  deck_bottom_height: 0.0665
+  # Envelope externo: a roda fica FORA da P01 (mudança da REV03)
+  overall_length: 0.400
+  overall_width: 0.241        # bitola 214 + largura da roda 27
+  # Topo da pilha (P02 a 135,5 mm + Jetson/câmera). Usado na sombra do
+  # próprio carro no simulador. ESTIMATIVA — medir no carro montado.
+  stack_height: 0.17
+  # Limite do regulamento Júnior/Master: 0,500 × 0,250
+  mass: 2.25                  # estimativa — PESAR
+  center_of_mass: [0.105, 0.006, 0.083]
+
+# --- tração diferencial ---------------------------------------
+# 2 rodas motrizes + 1 rodízio central: 3 apoios, sempre no chão.
+drive:
+  type: "differential"
+  track_width: 0.214          # bitola, centro a centro (≈107 do centro)
+  wheel_radius: 0.0325        # roda Ø65
+  wheel_width: 0.027
+  wheel_axle_x: 0.0           # por definição: base_link está no eixo
+
+  caster:
+    diameter: 0.050
+    x: 0.280                  # 280 mm do eixo (folha M3)
+    y: 0.0
+    # Rodízio de 65 de altura sob uma P01 a 66,5: o carro inclina 0,3°
+    pitch_offset_deg: 0.3
+
+  # O carro NÃO tem direção: curva = diferença de ROTAÇÃO entre as rodas.
+  # O simulador é todo em rotação de roda: o comando é rpm de cada roda,
+  # o ESP32 fecha um PID de velocidade por roda lendo o encoder, e o PWM
+  # que sai do PID move cada motor separadamente.
+  motor:
+    rpm_no_load_12v: 530      # motor do kit, redução 1:10
+    supply_voltage: 11.0      # XL4016 regulado — ver eletrônica
+    # 530 × (11/12) ≈ 486 rpm ≈ 1,65 m/s na roda
+    rpm_no_load: 486.0
+    # Constante de tempo MECÂNICA do motor + roda (malha aberta, PWM → rpm).
+    # ESTIMATIVA — medir: degrau de PWM com o carro no chão, log do encoder.
+    mechanical_time_constant: 0.06
+    # Abaixo deste duty o motor não vence o atrito estático e não gira.
+    # ESTIMATIVA — medir: subir o PWM devagar até a roda começar a girar.
+    deadband_duty: 0.08
+
+  encoder:
+    counts_per_rev: 440       # ESTIMATIVA — medir na bancada
+    quadrature: true
+    speed_window_s: 0.02      # janela para estimar rpm a partir dos ticks
+
+  # PID de velocidade POR RODA, como roda no ESP32 (CLAUDE.md §3.1).
+  # ESTIMATIVA até o firmware existir — ajustar com os gráficos da bancada.
+  pid:
+    hz: 100
+    kp: 0.02                  # duty por (rad/s) de erro
+    ki: 0.30
+    kd: 0.0
+    feedforward: true         # duty base = rpm_alvo / rpm_no_load
+    target_limit: 0.92        # nunca pede mais que 92 % do rpm livre: sobra controle
+
+  # Tolerâncias reais que o simulador sorteia por episódio.
+  tolerances:
+    wheel_radius_mismatch: 0.005   # ±0,5 % entre as rodas → o carro puxa para um lado
+    wheel_slip: 0.02               # até 2 % de patinação por roda no carpete
+
+# --- limites operacionais -------------------------------------
+limits:
+  v_max: 0.83                 # 3 km/h — velocidade de projeto
+  v_cruise: 0.50              # começar sempre devagar
+  v_maneuver: 0.30            # dentro de cruzamento
+  omega_max: 3.0              # rad/s
+  accel_max: 0.8              # m/s²
+  alpha_max: 6.0              # rad/s²
+
+# --- sensores de distância (HC-SR04 ×4) -----------------------
+# Posição = frente do sensor, a partir de base_link.
+ultrasonic:
+  model: "HC-SR04"
+  cone_half_angle_deg: 15.0
+  range_min: 0.02
+  range_max: 2.00
+  sensors:
+    - {name: "S1", x: 0.340, y:  0.0235, yaw_deg:   0.0, z: 0.0845}
+    - {name: "S2", x: 0.340, y: -0.0235, yaw_deg:   0.0, z: 0.0845}
+    - {name: "S3", x: 0.302, y:  0.0700, yaw_deg:  40.0, z: 0.0845}
+    - {name: "S4", x: 0.302, y: -0.0700, yaw_deg: -40.0, z: 0.0845}
+
+# --- IMU ------------------------------------------------------
+# MPU6050 — confirmado pela equipe em 02/11/2026 (o REV03 listava BNO085).
+# 6 eixos: giroscópio + acelerômetro, SEM magnetômetro e sem fusão pronta.
+# O rumo sai da INTEGRAÇÃO do giroscópio z — e deriva com o viés.
+imu:
+  model: "MPU6050"
+  interface: "I2C"
+  i2c_address: 0x68           # AD0 em nível baixo (0x69 com AD0 alto)
+  x: 0.217                    # posição do REV03 (área x 264–290 → ≈277 mm). CONFERIR.
+  y: 0.0
+  # Datasheet MPU-6000/6050 (PS-MPU-6000A-00 rev. 3.4):
+  gyro_range_dps: 250         # 131 LSB/(°/s); omega_max = 3 rad/s ≈ 172 °/s cabe
+  gyro_noise_density_dps_rthz: 0.005
+  gyro_initial_bias_dps: 20.0 # tolerância de fábrica do zero (ZRO): ±20 °/s → CALIBRAR SEMPRE
+  gyro_scale_tolerance: 0.03  # ±3 % no fator de escala — a calibração parada NÃO corrige
+  accel_range_g: 2
+  accel_noise_density_ug_rthz: 400
+  accel_initial_bias_mg: [50, 50, 80]   # x, y, z
+  dlpf_hz: 98                 # filtro digital (DLPF_CFG = 2) → ruído do giro ≈ 0,05 °/s RMS
+  # Quanto o viés anda durante uma prova (~100 s) DEPOIS de calibrar parado
+  # (temperatura, tempo). ESTIMATIVA — medir: carro parado 2 min, log.
+  gyro_bias_drift_dps: 0.05
+
+# --- bateria --------------------------------------------------
+battery:
+  chemistry: "LiPo 4S"
+  capacity_mah: 2200
+  v_full: 16.8
+  v_nominal: 14.8
+  v_warn_loaded: 14.4         # Vista entra em PARADA_SEGURA
+  v_min_rest: 15.0
+  v_absolute_min: 14.0
+  regulated_motor_voltage: 11.0

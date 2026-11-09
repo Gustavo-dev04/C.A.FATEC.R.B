@@ -1,0 +1,27 @@
+# =============================================================
+#  Extrínsecos da câmera — pose em relação a base_link
+# =============================================================
+# Fonte: desenho RC-2026-REV03. MEDIR no carro montado e atualizar.
+# Referencial: x frente, y esquerda, z cima (base_link no chão, no
+# meio do eixo das rodas).
+#
+# Suporte articulado na P02, furos K1-K2 em (291; ±10) do desenho
+# → pivô em x = 0,231 m. A lente fica um pouco à frente do pivô.
+
+x: 0.254
+y: 0.0
+z: 0.156          # altura do centro da lente
+
+# Pitch POSITIVO = apontando para BAIXO.
+# 15° é o valor do desenho. NÃO é decisão final — ver
+# docs/fov-analise.md. Resumo, com VFOV ≈ 72°:
+#   - a lente vermelha do semáforo (19,0° na largada) cabe até ~17°;
+#   - pitch maior vê o chão mais perto (bom para a faixa) mas perde a
+#     placa mais longe (1,02 m com 15°; 0,81 m com 10°).
+# TODO o dataset deve usar o mesmo pitch do carro final.
+pitch_deg: 15.0
+roll_deg: 0.0
+yaw_deg: 0.0
+
+# Resolução em que o Vista processa e o simulador renderiza por padrão.
+processing: {width: 410, height: 308}
