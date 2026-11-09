@@ -502,3 +502,34 @@ Pedido da equipe: deixar o repositório inteiro em dia com o que foi feito.
   o `main` só tem o commit inicial.
 - Em aberto: a proposta de atravessar o cruzamento por odometria + localização
   no mapa (aguardando ok).
+
+---
+
+## 09/11/2026 — Primeira medida real na Jetson: YOLO11n a 10–25 ms
+
+Informado pela equipe: num projeto anterior (detecção em soja), o **mesmo
+modelo YOLO11n** rodou na Jetson em **10–25 ms** por imagem. Condições ainda
+não registradas: tamanho de imagem (provavelmente 640, o padrão), formato
+(TensorRT/ONNX/PyTorch), se inclui pré-processamento e NMS, e qual Jetson.
+
+### Modelos do Vista (contados)
+
+| | Rede de faixa | Detector |
+|---|---|---|
+| Modelo | ResNet18 + cabeça (manobra) | YOLO11n |
+| Parâmetros | 11.309.893 (cabeça: 133.381) | 2.598.995 |
+| Custo por imagem | 5,6 GFLOPs (240×320) | 2,7 GFLOPs (416×416); 6,4 a 640×640 |
+| ONNX FP32 | ~45 MB | 10,1 MB |
+
+### Orçamento de tempo
+
+A câmera a 30 fps dá 33 ms por quadro. Se o detector custar 10–25 ms e a rede
+de faixa algo parecido (estimativa pelo custo; não medido), as duas a cada
+quadro podem passar de 33 ms. Proposta:
+
+- **Rede de faixa a cada quadro** (30 Hz).
+- **Detector a cada 2–3 quadros** (10–15 Hz). A 0,5 m/s são 3–5 cm entre
+  detecções; a placa aparece a ~1,5 m do cruzamento.
+
+Medir as duas em TensorRT FP16 na Orin Nano do carro, com pré-processamento,
+está no plano de 14–20/11.

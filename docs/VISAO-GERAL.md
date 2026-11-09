@@ -131,6 +131,12 @@ Pipeline completo no [notebook do Colab](../notebooks/treino_vista.ipynb) ([ADR 
 
 Nessa avaliação a manobra e o semáforo ainda vêm da verdade; o detector ainda não está no laço.
 
+### Na Jetson (medido pela equipe)
+
+- **YOLO11n: 10–25 ms por imagem**, num projeto anterior (soja). Condições a registrar: tamanho de imagem, TensorRT ou não, se inclui pré/pós-processamento.
+- Os modelos do Vista: rede de faixa **11,3 M** parâmetros (5,6 GFLOPs a 240×320); detector **2,6 M** (2,7 GFLOPs a 416×416).
+- **Orçamento:** 33 ms por quadro a 30 fps. Proposta: rede de faixa a cada quadro, detector a cada 2–3 quadros.
+
 ### O problema atual: o cruzamento
 
 Dentro do cruzamento não há linha pintada: a trilha certa é uma **curva invisível**. Olhando quadro a quadro (com um modelo de teste), a rede acha que ainda está numa reta antes do cruzamento:
