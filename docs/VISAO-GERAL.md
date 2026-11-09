@@ -133,9 +133,9 @@ Nessa avaliação a manobra e o semáforo ainda vêm da verdade; o detector aind
 
 ### Na Jetson (medido pela equipe)
 
-- **YOLO11n: 10–25 ms por imagem**, num projeto anterior (soja). Condições a registrar: tamanho de imagem, TensorRT ou não, se inclui pré/pós-processamento.
+- **YOLO11n: 10–25 ms por imagem** na mesma Orin Nano do carro, num projeto anterior (soja): imagem 640×640, pipeline inteiro (pré-processamento + inferência + caixas), FP16 ou FP32. É o pior caso para o Vista, que usa 416×416.
 - Os modelos do Vista: rede de faixa **11,3 M** parâmetros (5,6 GFLOPs a 240×320); detector **2,6 M** (2,7 GFLOPs a 416×416).
-- **Orçamento:** 33 ms por quadro a 30 fps. Proposta: rede de faixa a cada quadro, detector a cada 2–3 quadros.
+- **Orçamento:** 33 ms por quadro a 30 fps. Caso típico, ~20 ms as duas redes juntas (cabe); pior caso, ~45 ms (não cabe). Padrão seguro: rede de faixa a cada quadro, detector a cada 2–3 quadros. Medir as duas em TensorRT FP16 de 14–20/11.
 
 ### O problema atual: o cruzamento
 

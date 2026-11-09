@@ -533,3 +533,17 @@ quadro podem passar de 33 ms. Proposta:
 
 Medir as duas em TensorRT FP16 na Orin Nano do carro, com pré-processamento,
 está no plano de 14–20/11.
+
+### 09/11 — condições da medida (informadas pela equipe)
+
+- Imagem **640×640**; precisão **FP16 ou FP32** (não lembrado); tempo do
+  **pipeline inteiro** (pré-processamento + inferência + caixas/classes);
+  **mesma Orin Nano** do carro.
+
+Leitura: é o pior caso para o Vista. Com 416×416 o detector deve ficar abaixo
+de 10–25 ms (não 2,4× menos: parte do tempo é fixa). A rede de faixa tem custo
+parecido com o YOLO a 640 e não tem pós-processamento de caixas → deve ficar
+≤ 10–25 ms. Caso típico: ~20 ms as duas juntas (cabe em 33 ms); pior caso:
+~45 ms (não cabe) → detector a cada 2–3 quadros como padrão seguro. A
+variação (10 a 25 ms) pesa no controle; anotar o modo de energia (`nvpmodel`)
+na próxima medida — sem alterá-lo sem a equipe.
